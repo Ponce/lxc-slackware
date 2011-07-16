@@ -1,0 +1,20 @@
+#!/bin/sh
+# startup script for initialize a network bridge.
+# the containers will have addresses on the same network
+# segment.
+# if you want it to start at boot, you can add it like this
+# to /etc/rc.d/rc.local
+#
+# # start a bridge used by lxc containers
+# if [ -x /usr/local/sbin/lxc-network-bridge ]; then
+#    /usr/local/sbin/lxc-network-bridge
+# fi
+
+/sbin/brctl addbr br0
+/sbin/brctl setfd br0 0
+/sbin/ifconfig br0 192.168.11.5 netmask 255.255.255.0 promisc up
+/sbin/brctl addif br0 eth0
+ifconfig eth0 0.0.0.0 up
+route add default gw 192.168.11.1
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/conf/br0/proxy_arp
