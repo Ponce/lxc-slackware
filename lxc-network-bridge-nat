@@ -1,0 +1,25 @@
+#!/bin/sh
+# startup script for starting a network bridge and initialize a
+# private network that will use the node as its gateway with NAT.
+# connections coming from the outside on the main node
+# can be redirected on the internal containers using iptables.
+# if you want it to start at boot, you can add it like this
+# to /etc/rc.d/rc.local
+#
+# # start a bridge used by lxc containers
+# if [ -x /usr/local/sbin/lxc-network-bridge-nat ]; then
+#    /usr/local/sbin/lxc-network-bridge-nat
+# fi
+
+/sbin/brctl addbr br0
+/sbin/brctl setfd br0 0
+/sbin/ifconfig br0 192.168.11.1 netmask 255.255.255.0 promisc up
+/sbin/brctl addif br0 dummy0
+ifconfig dummy0 0.0.0.0 up
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/conf/br0/proxy_arp
+/usr/sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+# examples of redirections
+iptables -t nat -A PREROUTING -p tcp --dport 51 -i eth0 -j DNAT --to 192.168.11.2:51
+iptables -t nat -A PREROUTING -p tcp --dport 80 -i eth0 -j DNAT --to 192.168.11.3:80
