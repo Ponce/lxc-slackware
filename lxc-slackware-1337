@@ -1,0 +1,1160 @@
+#!/bin/bash
+
+#
+# lxc: linux Container library
+
+# Authors:
+# Daniel Lezcano <daniel.lezcano@free.fr>
+
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# template for slackware 13.37 by ponce <matteo.bernardini@gmail.com>
+# based on the debian one
+
+suite=13.37
+cache="/var/cache/lxc/slackware"
+MIRROR=${MIRROR:-http://slackware.osuosl.org}
+
+case "$( uname -m )" in
+    i?86) arch=i486 ;;
+#    arm*) arch=arm ;;
+       *) arch=$( uname -m ) ;;
+esac
+
+configure_slackware()
+{
+rootfs=$1
+hostname=$2
+
+echo "Configuring..."
+echo
+
+# the next part contains excerpts taken from SeTconfig (written by
+# Patrick Volkerding) from the slackware setup disk.
+# but before pasting just set a variable to use them as they are 
+T_PX=$rootfs
+
+( cd $T_PX ; chmod 755 ./ )
+( cd $T_PX ; chmod 755 ./var )
+if [ -d $T_PX/usr/src/linux ]; then
+  chmod 755 $T_PX/usr/src/linux
+fi
+if [ ! -d $T_PX/proc ]; then
+  mkdir $T_PX/proc
+  chown root.root $T_PX/proc
+fi
+if [ ! -d $T_PX/sys ]; then
+  mkdir $T_PX/sys
+  chown root.root $T_PX/sys
+fi
+chmod 1777 $T_PX/tmp
+if [ ! -d $T_PX/var/spool/mail ]; then
+  mkdir -p $T_PX/var/spool/mail
+  chmod 755 $T_PX/var/spool
+  chown root.mail $T_PX/var/spool/mail
+  chmod 1777 $T_PX/var/spool/mail
+fi
+
+echo "#!/bin/sh" > $T_PX/etc/rc.d/rc.keymap
+echo "# Load the keyboard map.  More maps are in /usr/share/kbd/keymaps." \
+  >> $T_PX/etc/rc.d/rc.keymap
+echo "if [ -x /usr/bin/loadkeys ]; then" >> $T_PX/etc/rc.d/rc.keymap
+echo " /usr/bin/loadkeys us" >> $T_PX/etc/rc.d/rc.keymap
+echo "fi" >> $T_PX/etc/rc.d/rc.keymap
+chmod 755 $T_PX/etc/rc.d/rc.keymap
+
+# try to configure the primary container interface using dhcp
+sed -i -e 's|USE_DHCP\[0\]=""|USE_DHCP\[0\]="yes"|' \
+  $rootfs/etc/rc.d/rc.inet1.conf
+
+# set the hostname
+cat <<EOF > $rootfs/etc/HOSTNAME
+$hostname.example.net
+EOF
+cp $rootfs/etc/HOSTNAME $rootfs/etc/hostname
+
+# make needed devices, from Chris Willing's MAKEDEV.sh
+# http://www.vislab.uq.edu.au/howto/lxc/MAKEDEV.sh
+DEV=$rootfs/dev
+mkdir -p ${DEV}
+mknod -m 666 ${DEV}/null c 1 3
+mknod -m 666 ${DEV}/zero c 1 5
+mknod -m 666 ${DEV}/random c 1 8
+mknod -m 666 ${DEV}/urandom c 1 9
+mkdir -m 755 ${DEV}/pts
+mkdir -m 1777 ${DEV}/shm
+mknod -m 666 ${DEV}/tty c 5 0
+mknod -m 600 ${DEV}/console c 5 1
+mknod -m 666 ${DEV}/tty0 c 4 0
+mknod -m 666 ${DEV}/tty1 c 4 1
+mknod -m 666 ${DEV}/tty2 c 4 2
+mknod -m 666 ${DEV}/tty3 c 4 3
+mknod -m 666 ${DEV}/tty4 c 4 4
+mknod -m 666 ${DEV}/tty5 c 4 5
+mknod -m 666 ${DEV}/full c 1 7
+mknod -m 600 ${DEV}/initctl p
+mknod -m 666 ${DEV}/ptmx c 5 2
+
+echo "Adding an etc/fstab that must be edited later with the full path of the container."
+cat >$rootfs/etc/fstab <<EOF
+none $rootfs/dev/pts devpts defaults 0 0
+none $rootfs/proc    proc   defaults 0 0
+none $rootfs/sys     sysfs  defaults 0 0
+none /dev/shm tmpfs  defaults 0 0
+EOF
+
+# adding simplified versions of rc.S and rc.6
+# inspiration source http://www.vislab.uq.edu.au/howto/lxc/create_container.html
+
+cat >$rootfs/etc/rc.d/rc.S <<'EOF'
+#!/bin/sh
+#
+# /etc/rc.d/rc.S:  System initialization script.
+#
+# Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+#
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# based also on Chris Willing's modifications
+# http://www.vislab.uq.edu.au/howto/lxc/rc.S
+# unneeded parts are just commented out.
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+
+# Try to mount /proc:
+/sbin/mount -v proc /proc -n -t proc 2> /dev/null
+
+# Mount sysfs next, if the kernel supports it:
+if [ -d /sys ]; then
+  if grep -wq sysfs /proc/filesystems ; then
+    if ! grep -wq sysfs /proc/mounts ; then
+      /sbin/mount -v sysfs /sys -n -t sysfs
+    fi
+  fi
+fi
+
+## Load the loop device kernel module:
+#if [ -x /etc/rc.d/rc.loop ]; then
+#  . /etc/rc.d/rc.loop start
+#fi
+#
+## Initialize udev to manage /dev entries and hotplugging for 2.6.x kernels.
+## You may turn off udev by making the /etc/rc.d/rc.udev file non-executable
+## or giving the "nohotplug" option at boot, but in the 2.6.x+ kernels udev
+## has taken over the job of hotplug (finding hardware and loading the kernel
+## modules for it, as well as creating device nodes in /dev).  Realize that
+## if you turn off udev that you will have to load all the kernel modules
+## that you need yourself (possibly in /etc/rc.d/rc.modules, which does not
+## promise to list all of them), and make any additional device nodes that you
+## need in the /dev directory.  Even USB and IEEE1394 devices will need to have
+## the modules loaded by hand if udev is not used with a 2.6 kernel.  So use it.  :-)
+#if grep -wq sysfs /proc/mounts && grep -q tmpfs /proc/filesystems ; then
+#  if ! grep -wq nohotplug /proc/cmdline ; then
+#    if [ -x /etc/rc.d/rc.udev ]; then
+#      /bin/sh /etc/rc.d/rc.udev start
+#    fi
+#  fi
+#fi
+#
+## Mount Control Groups filesystem interface:
+#if grep -wq cgroup /proc/filesystems ; then
+#  if [ -d /sys/fs/cgroup ]; then
+#    mount -t cgroup cgroup /sys/fs/cgroup
+#  else
+#    mkdir -p /dev/cgroup
+#    mount -t cgroup cgroup /dev/cgroup
+#  fi
+#fi
+#
+## Initialize the Logical Volume Manager.
+## This won't start unless we find /etc/lvmtab (LVM1) or
+## /etc/lvm/backup/ (LVM2).  This is created by /sbin/vgscan, so to
+## use LVM you must run /sbin/vgscan yourself the first time (and
+## create some VGs and LVs).
+#if [ -r /etc/lvmtab -o -d /etc/lvm/backup ]; then
+#  echo "Initializing LVM (Logical Volume Manager):"
+#  # Check for device-mapper support.
+#  if ! grep -wq device-mapper /proc/devices ; then
+#    # Try to load a device-mapper kernel module:
+#    /sbin/modprobe -q dm-mod
+#  fi
+#  # Scan for new volume groups:
+#  /sbin/vgscan --mknodes --ignorelockingfailure 2> /dev/null
+#  if [ $? = 0 ]; then
+#    # Make volume groups available to the kernel.
+#    # This should also make logical volumes available.
+#    /sbin/vgchange -ay --ignorelockingfailure
+#  fi
+#fi
+#
+# Open any volumes created by cryptsetup:
+#if [ -f /etc/crypttab -a -x /sbin/cryptsetup ]; then
+#  # First, check for device-mapper support.
+#  if ! grep -wq device-mapper /proc/devices ; then
+#    # If device-mapper exists as a module, try to load it.
+#    # Try to load a device-mapper kernel module:
+#    /sbin/modprobe -q dm-mod
+#  fi
+#  # NOTE: we only support LUKS formatted volumes (except for swap)!
+#  cat /etc/crypttab | grep -v "^#" | grep -v "^$" | while read line; do
+#    eval LUKSARRAY=( $line )
+#    LUKS="${LUKSARRAY[0]}"
+#    DEV="${LUKSARRAY[1]}"
+#    PASS="${LUKSARRAY[2]}"
+#    OPTS="${LUKSARRAY[3]}"
+#    LUKSOPTS=""
+#    if echo $OPTS | grep -wq ro ; then LUKSOPTS="${LUKSOPTS} --readonly" ; fi
+#
+#    # Skip LUKS volumes that were already unlocked (in the initrd):
+#    /sbin/cryptsetup status $LUKS 2>/dev/null | head -n 1 | grep -q "is active" && continue
+#    if /sbin/cryptsetup isLuks $DEV 2>/dev/null ; then
+#      echo "Unlocking LUKS crypt volume '${LUKS}' on device '$DEV':"
+#      if [ -n "${PASS}" ]; then
+#        if [ -f ${PASS} ]; then
+#          /sbin/cryptsetup ${LUKSOPTS} --key-file=${PASS} luksOpen $DEV $LUKS
+#        elif [ "${PASS}" != "none" ]; then
+#          # A password field of 'none' indicates a line for swap:
+#          echo "${PASS}" | /sbin/cryptsetup ${LUKSOPTS} luksOpen $DEV $LUKS
+#        fi
+#      else
+#        for i in seq 1 3 ; do
+#          /sbin/cryptsetup ${LUKSOPTS} luksOpen $DEV $LUKS </dev/tty0 >/dev/tty0 2>&1
+#          [ $? -eq 0 ] && break
+#        done
+#      fi
+#    elif echo $OPTS | grep -wq swap ; then
+#      # If any of the volumes is to be used as encrypted swap,
+#      # then encrypt it using a random key and run mkswap:
+#      echo "Creating encrypted swap on device '$DEV' mapped to '${LUKS}':"
+#      /sbin/cryptsetup --cipher=aes --key-file=/dev/urandom --key-size=256 create $LUKS $DEV
+#      mkswap /dev/mapper/$LUKS
+#    fi
+#  done
+#fi
+#
+## Enable swapping:
+#/sbin/swapon -a 2> /dev/null
+#
+## Start FUSE, if requested:
+#if [ -x /etc/rc.d/rc.fuse ]; then
+#  sh /etc/rc.d/rc.fuse start
+#fi
+#
+## Set the system time from the hardware clock using hwclock --hctosys.
+#if [ -x /sbin/hwclock ]; then
+#  # Check for a broken motherboard RTC clock (where ioports for rtc are
+#  # unknown) to prevent hwclock causing a hang:
+#  if ! grep -q -w rtc /proc/ioports ; then
+#    CLOCK_OPT="--directisa"
+#  fi
+#  if grep -wq "^UTC" /etc/hardwareclock ; then
+#    echo "Setting system time from the hardware clock (UTC)."
+#    /sbin/hwclock $CLOCK_OPT --utc --hctosys
+#  else
+#    echo "Setting system time from the hardware clock (localtime)."
+#    /sbin/hwclock $CLOCK_OPT --localtime --hctosys
+#  fi
+#fi
+#
+## Test to see if the root partition is read-only, like it ought to be.
+#READWRITE=no
+#if touch /fsrwtestfile 2>/dev/null; then
+#  rm -f /fsrwtestfile
+#  READWRITE=yes
+#else
+#  echo "Testing root filesystem status:  read-only filesystem"
+#fi
+#
+# See if a forced filesystem check was requested at shutdown:
+#if [ -r /etc/forcefsck ]; then
+#  FORCEFSCK="-f"
+#fi
+#
+## Check the root filesystem:
+#if [ ! $READWRITE = yes ]; then
+#  RETVAL=0
+#  if [ ! -r /etc/fastboot ]; then
+#    echo "Checking root filesystem:"
+#    /sbin/fsck $FORCEFSCK -C -a /
+#    RETVAL=$?
+#  fi
+#  # An error code of 2 or higher will require a reboot.
+#  if [ $RETVAL -ge 2 ]; then
+#    # An error code equal to or greater than 4 means that some errors
+#    # could not be corrected.  This requires manual attention, so we
+#    # offer a chance to try to fix the problem in single-user mode:
+#    if [ $RETVAL -ge 4 ]; then
+#      echo
+#      echo "***********************************************************"
+#      echo "*** An error occurred during the root filesystem check. ***"
+#      echo "*** You will now be given a chance to log into the      ***"
+#      echo "*** system in single-user mode to fix the problem.      ***"
+#      echo "***                                                     ***"
+#      echo "*** If you are using the ext2 filesystem, running       ***"
+#      echo "*** 'e2fsck -v -y <partition>' might help.              ***"
+#      echo "***********************************************************"
+#      echo
+#      echo "Once you exit the single-user shell, the system will reboot."
+#      echo
+#      PS1="(Repair filesystem) \#"; export PS1
+#      sulogin
+#    else # With an error code of 2 or 3, reboot the machine automatically:
+#      echo
+#      echo "***********************************"
+#      echo "*** The filesystem was changed. ***"
+#      echo "*** The system will now reboot. ***"
+#      echo "***********************************"
+#      echo
+#    fi
+#    echo "Unmounting file systems."
+#    /sbin/umount -a -r
+#    /sbin/mount -n -o remount,ro /
+#    echo "Rebooting system."
+#    sleep 2
+#    reboot -f
+#  fi
+#  # Remount the root filesystem in read-write mode
+#  echo "Remounting root device with read-write enabled."
+#  /sbin/mount -w -v -n -o remount /
+#  if [ $? -gt 0 ] ; then
+#    echo
+#    echo "Attempt to remount root device as read-write failed!  This is going to"
+#    echo "cause serious problems."
+#    echo 
+#    echo "If you're using the UMSDOS filesystem, you **MUST** mount the root partition"
+#    echo "read-write!  You can make sure the root filesystem is getting mounted "
+#    echo "read-write with the 'rw' flag to Loadlin:"
+#    echo
+#    echo "loadlin vmlinuz root=/dev/hda1 rw   (replace /dev/hda1 with your root device)"
+#    echo
+#    echo "Normal bootdisks can be made to mount a system read-write with the rdev command:"
+#    echo
+#    echo "rdev -R /dev/fd0 0"
+#    echo
+#    echo "You can also get into your system by using a boot disk with a command like this"
+#    echo "on the LILO prompt line:  (change the root partition name as needed)"
+#    echo 
+#    echo "LILO: mount root=/dev/hda1 rw"
+#    echo
+#    echo "Please press ENTER to continue, then reboot and use one of the above methods to"
+#    echo -n "get into your machine and start looking for the problem. " 
+#    read junk; 
+#  fi
+#else
+#  echo "Testing root filesystem status:  read-write filesystem"
+#  echo
+#  echo "*** ERROR: Root partition has already been mounted read-write. Cannot check!"
+#  echo
+#  echo "For filesystem checking to work properly, your system must initially mount"
+#  echo "the root partition as read only. Please modify your kernel with 'rdev' so that"
+#  echo "it does this. If you're booting with LILO, add a line:"
+#  echo
+#  echo "   read-only"
+#  echo
+#  echo "to the Linux section in your /etc/lilo.conf and type 'lilo' to reinstall it."
+#  echo
+#  echo "If you boot from a kernel on a floppy disk, put it in the drive and type:"
+#  echo "   rdev -R /dev/fd0 1"
+#  echo
+#  echo "If you boot from a bootdisk, or with Loadlin, you can add the 'ro' flag."
+#  echo
+#  echo "This will fix the problem *AND* eliminate this annoying message. :^)"
+#  echo
+#  echo -n "Press ENTER to continue. "
+#  read junk;
+#fi # Done checking root filesystem
+
+# Any /etc/mtab that exists here is old, so we delete it to start over:
+/bin/rm -f /etc/mtab*
+# Remounting the / partition will initialize the new /etc/mtab:
+#/sbin/mount -w -o remount /
+/usr/bin/touch /etc/mtab
+
+# Read in the correct / filesystem complete with arguments so mount will
+# show them correctly. This does not stop those arguments from functioning
+# but does prevent a small bug with /etc/mtab.
+/bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
+
+# Fix /etc/mtab to list sys and proc if they were not yet entered in
+# /etc/mtab because / was still mounted read-only:
+if [ -d /proc/sys ]; then
+  /sbin/mount -f proc /proc -t proc
+fi
+if [ -d /sys/bus ]; then
+  /sbin/mount -f sysfs /sys -t sysfs
+fi
+
+## Configure ISA Plug-and-Play devices:
+#if [ -r /etc/isapnp.conf ]; then
+#  if [ -x /sbin/isapnp ]; then
+#    /sbin/isapnp /etc/isapnp.conf
+#  fi
+#fi
+#
+## This loads any kernel modules that are needed.  These might be required to
+## use your ethernet card, sound card, or other optional hardware.
+## Priority is given first to a script named "rc.modules.local", then
+## to "rc.modules-$FULL_KERNEL_VERSION", and finally to the plain "rc.modules".
+## Note that if /etc/rc.d/rc.modules.local is found, then that will be the ONLY
+## rc.modules script the machine will run, so make sure it has everything in
+## it that you need.
+#if [ -x /etc/rc.d/rc.modules.local -a -r /proc/modules ]; then
+#  echo "Running /etc/rc.d/rc.modules.local:"
+#  /bin/sh /etc/rc.d/rc.modules.local
+#elif [ -x /etc/rc.d/rc.modules-$(uname -r) -a -r /proc/modules ]; then
+#  echo "Running /etc/rc.d/rc.modules-$(uname -r):"
+#  . /etc/rc.d/rc.modules-$(uname -r)
+#elif [ -x /etc/rc.d/rc.modules -a -r /proc/modules -a -L /etc/rc.d/rc.modules ]; then
+#  echo "Running /etc/rc.d/rc.modules -> $(readlink /etc/rc.d/rc.modules):"
+#  . /etc/rc.d/rc.modules
+#elif [ -x /etc/rc.d/rc.modules -a -r /proc/modules ]; then
+#  echo "Running /etc/rc.d/rc.modules:"
+#  . /etc/rc.d/rc.modules
+#fi
+#
+## Configure runtime kernel parameters:
+#if [ -x /sbin/sysctl -a -r /etc/sysctl.conf ]; then
+#  /sbin/sysctl -e -p /etc/sysctl.conf
+#fi
+#
+## Check all the non-root filesystems:
+#if [ ! -r /etc/fastboot ]; then
+#  echo "Checking non-root filesystems:"
+#  /sbin/fsck $FORCEFSCK -C -R -A -a
+#fi
+#
+## Mount usbfs only if it is found in /etc/fstab:
+#if grep -wq usbfs /proc/filesystems; then
+#  if ! grep -wq usbfs /proc/mounts ; then
+#    if grep -wq usbfs /etc/fstab; then
+#      /sbin/mount -v /proc/bus/usb
+#    fi
+#  fi
+#fi
+
+# Mount non-root file systems in fstab, but not NFS or SMB 
+# because TCP/IP is not yet configured, and not proc or sysfs
+# because those have already been mounted.  Also check that
+# devpts is not already mounted before attempting to mount
+# it.  With a 2.6.x or newer kernel udev mounts devpts.
+# We also need to wait a little bit to let USB and other
+# hotplugged devices settle (sorry to slow down the boot):
+echo "Mounting non-root local filesystems:"
+sleep 3
+if /bin/grep -wq devpts /proc/mounts ; then
+  /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs,nodevpts
+else
+  /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
+fi
+
+## Enable swapping again.  This is needed in case a swapfile is used,
+## as it can't be enabled until the filesystem it resides on has been
+## mounted read-write.
+#/sbin/swapon -a 2> /dev/null
+
+# Clean up some temporary files:
+rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
+  /etc/dhcpc/*.pid /etc/forcefsck /etc/fastboot \
+  /var/state/saslauthd/saslauthd.pid \
+  /tmp/.Xauth* 1> /dev/null 2> /dev/null
+  ( cd /var/log/setup/tmp && rm -rf * )
+  ( cd /tmp && rm -rf kde-[a-zA-Z]* ksocket-[a-zA-Z]* hsperfdata_[a-zA-Z]* plugtmp* )
+
+# Create /tmp/{.ICE-unix,.X11-unix} if they are not present:
+if [ ! -e /tmp/.ICE-unix ]; then
+  mkdir -p /tmp/.ICE-unix
+  chmod 1777 /tmp/.ICE-unix
+fi
+if [ ! -e /tmp/.X11-unix ]; then
+  mkdir -p /tmp/.X11-unix
+  chmod 1777 /tmp/.X11-unix
+fi
+
+# Create a fresh utmp file:
+touch /var/run/utmp
+chown root:utmp /var/run/utmp
+chmod 664 /var/run/utmp
+
+# Update the current kernel level in the /etc/motd (Message Of The Day) file,
+# if the first line of that file begins with the word 'Linux'.
+# You are free to modify the rest of the file as you see fit.
+if [ -x /bin/sed ]; then
+  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
+fi
+
+# If there are SystemV init scripts for this runlevel, run them.
+if [ -x /etc/rc.d/rc.sysvinit ]; then
+  . /etc/rc.d/rc.sysvinit
+fi
+
+## Run serial port setup script:
+## CAREFUL!  This can make some systems hang if the rc.serial script isn't
+## set up correctly.  If this happens, you may have to edit the file from a
+## boot disk, and/or set it as non-executable:
+#if [ -x /etc/rc.d/rc.serial ]; then
+#  sh /etc/rc.d/rc.serial start
+#fi
+
+# Carry an entropy pool between reboots to improve randomness.
+if [ -f /etc/random-seed ]; then
+  echo "Using /etc/random-seed to initialize /dev/urandom."
+  cat /etc/random-seed > /dev/urandom
+fi
+# Use the pool size from /proc, or 512 bytes:
+if [ -r /proc/sys/kernel/random/poolsize ]; then
+  dd if=/dev/urandom of=/etc/random-seed count=1 bs=$(cat /proc/sys/kernel/random/poolsize) 2> /dev/null
+else
+  dd if=/dev/urandom of=/etc/random-seed count=1 bs=512 2> /dev/null
+fi
+chmod 600 /etc/random-seed
+EOF
+
+cat >$rootfs/etc/rc.d/rc.6 <<'EOF'
+#! /bin/sh
+#
+# rc.6		This file is executed by init when it goes into runlevel
+#		0 (halt) or runlevel 6 (reboot). It kills all processes,
+#		unmounts file systems and then either halts or reboots.
+#
+# Version:	@(#)/etc/rc.d/rc.6	2.47 Sat Jan 13 13:37:26 PST 2001
+#
+# Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
+# Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+#
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# based also on Chris Willing's modifications
+# http://www.vislab.uq.edu.au/howto/lxc/rc.6
+# unneeded parts are just commented out.
+
+# Set the path.
+PATH=/sbin:/etc:/bin:/usr/bin
+
+# If there are SystemV init scripts for this runlevel, run them.
+if [ -x /etc/rc.d/rc.sysvinit ]; then
+  . /etc/rc.d/rc.sysvinit
+fi
+
+# Set linefeed mode to avoid staircase effect.
+/bin/stty onlcr
+
+echo "Running shutdown script $0:"
+
+# Find out how we were called.
+case "$0" in
+	*0)
+		command="halt"
+		;;
+	*6)
+		command=reboot
+		;;
+	*)
+		echo "$0: call me as \"rc.0\" or \"rc.6\" please!"
+		exit 1
+		;;
+esac
+
+## Save the system time to the hardware clock using hwclock --systohc.
+#if [ -x /sbin/hwclock ]; then
+#  # Check for a broken motherboard RTC clock (where ioports for rtc are
+#  # unknown) to prevent hwclock causing a hang:
+#  if ! grep -q -w rtc /proc/ioports ; then
+#    CLOCK_OPT="--directisa"
+#  fi
+#  if grep -q "^UTC" /etc/hardwareclock 2> /dev/null ; then
+#    echo "Saving system time to the hardware clock (UTC)."
+#    /sbin/hwclock $CLOCK_OPT --utc --systohc
+#  else
+#    echo "Saving system time to the hardware clock (localtime)."
+#    /sbin/hwclock  $CLOCK_OPT --localtime --systohc
+#  fi
+#fi
+
+# Run any local shutdown scripts:
+if [ -x /etc/rc.d/rc.local_shutdown ]; then
+  /etc/rc.d/rc.local_shutdown stop
+fi
+
+# Stop the Apache web server:
+if [ -x /etc/rc.d/rc.httpd ]; then
+  /etc/rc.d/rc.httpd stop
+fi
+
+# Stop the MySQL database:
+if [ -r /var/run/mysql/mysql.pid ]; then
+  . /etc/rc.d/rc.mysqld stop
+fi
+
+# Stop the Samba server:
+if [ -x /etc/rc.d/rc.samba ]; then
+  . /etc/rc.d/rc.samba stop
+fi
+
+# Shut down the NFS server:
+if [ -x /etc/rc.d/rc.nfsd ]; then
+  /etc/rc.d/rc.nfsd stop
+fi
+
+# Shut down the SSH server:
+if [ -x /etc/rc.d/rc.sshd ]; then
+  /etc/rc.d/rc.sshd stop
+fi
+
+# Shut down the SASL authentication daemon:
+if [ -x /etc/rc.d/rc.saslauthd ]; then
+  /etc/rc.d/rc.saslauthd stop
+fi
+
+# Shut down OpenLDAP:
+if [ -x /etc/rc.d/rc.openldap ]; then
+  /etc/rc.d/rc.openldap stop
+fi
+
+# Stop D-Bus:
+if [ -x /etc/rc.d/rc.messagebus ]; then
+  sh /etc/rc.d/rc.messagebus stop
+fi
+
+# Kill any processes (typically gam) that would otherwise prevent
+# unmounting NFS volumes:
+unset FUSER_DELAY
+for dir in $(/bin/mount | grep 'type nfs' | cut -d ' ' -f 3 ) ; do
+  echo "Killing processes holding NFS mount $dir open..."
+  # Background this to prevent fuser from also blocking shutdown:
+  /usr/bin/fuser -k -m $dir &
+  FUSER_DELAY=5
+done
+# If fuser was run, let it have some delay:
+if [ ! -z "$FUSER_DELAY" ]; then
+  sleep $FUSER_DELAY
+fi
+
+# Unmount any NFS, SMB, or CIFS filesystems:
+echo "Unmounting remote filesystems."
+/bin/umount -v -a -r -t nfs,smbfs,cifs
+
+# Try to shut down pppd:
+PS="$(ps ax)"
+if echo "$PS" | /bin/grep -q -w pppd ; then
+  if [ -x /usr/sbin/ppp-off ]; then
+    /usr/sbin/ppp-off
+  fi
+fi
+
+# Bring down the networking system, but first make sure that this
+# isn't a diskless client with the / partition mounted via NFS:
+if ! /bin/mount | /bin/grep -q 'on / type nfs' ; then
+  if [ -x /etc/rc.d/rc.inet1 ]; then
+    . /etc/rc.d/rc.inet1 stop
+  fi
+fi
+
+# In case dhcpcd might have been manually started on the command line,
+# look for the .pid file, and shut dhcpcd down if it's found:
+if /bin/ls /etc/dhcpc/*.pid 1> /dev/null 2> /dev/null ; then
+  /sbin/dhcpcd -k 1> /dev/null 2> /dev/null
+  # A little time for /etc/resolv.conf and/or other files to
+  # restore themselves.
+  sleep 2
+fi
+
+## Shut down PCMCIA devices:
+#if [ -x /etc/rc.d/rc.pcmcia ]; then
+#  . /etc/rc.d/rc.pcmcia stop
+#  # The cards might need a little extra time here to deactivate:
+#  /bin/sleep 5
+#fi
+
+# Turn off process accounting:
+if [ -x /sbin/accton -a -r /var/log/pacct ]; then
+  /sbin/accton off
+fi
+
+## Terminate acpid before syslog:
+#if [ -x /etc/rc.d/rc.acpid -a -r /var/run/acpid.pid ]; then # quit
+#  . /etc/rc.d/rc.acpid stop
+#fi
+
+# Kill all processes.
+# INIT is supposed to handle this entirely now, but this didn't always
+# work correctly without this second pass at killing off the processes.
+# Since INIT already notified the user that processes were being killed,
+# we'll avoid echoing this info this time around.
+if [ ! "$1" = "fast" ]; then # shutdown did not already kill all processes
+  /sbin/killall5 -15 
+  /bin/sleep 5
+  /sbin/killall5 -9
+fi
+
+# Try to turn off quota.
+if /bin/grep -q quota /etc/fstab ; then
+  if [ -x /sbin/quotaoff ]; then
+    echo "Turning off filesystem quotas."
+    /sbin/quotaoff -a
+  fi
+fi
+
+# Carry a random seed between reboots.
+echo "Saving random seed from /dev/urandom in /etc/random-seed."
+# Use the pool size from /proc, or 512 bytes:
+if [ -r /proc/sys/kernel/random/poolsize ]; then
+  /bin/dd if=/dev/urandom of=/etc/random-seed count=1 bs=$(cat /proc/sys/kernel/random/poolsize) 2> /dev/null
+else
+  /bin/dd if=/dev/urandom of=/etc/random-seed count=1 bs=512 2> /dev/null
+fi
+/bin/chmod 600 /etc/random-seed
+
+# Before unmounting file systems write a reboot or halt record to wtmp.
+$command -w
+
+# Clear /var/lock/subsys.
+if [ -d /var/lock/subsys ]; then
+  rm -f /var/lock/subsys/*
+fi
+
+# Turn off swap:
+echo "Turning off swap."
+/sbin/swapoff -a
+/bin/sync
+
+echo "Unmounting local file systems."
+/bin/umount -v -a -t proc,sysfs
+
+##echo "Remounting root filesystem read-only."
+#/bin/mount -v -n -o remount,ro /
+#
+## This never hurts:
+#/bin/sync
+#
+## Close any volumes opened by cryptsetup:
+#if [ -f /etc/crypttab -a -x /sbin/cryptsetup ]; then
+#  cat /etc/crypttab | grep -v "^#" | grep -v "^$" | while read line; do
+#    # NOTE: we only support LUKS formatted volumes (except for swap)!
+#    LUKS=$(echo $line | tr '\t' ' ' | tr -s ' ' | cut -f1 -d' ')
+#    DEV=$(echo $line | tr '\t' ' ' | tr -s ' ' | cut -f2 -d' ')
+#    OPTS=$(echo $line | tr '\t' ' ' | tr -s ' ' | cut -f4 -d' ')
+#    if /sbin/cryptsetup isLuks $DEV 2>/dev/null ; then
+#      echo "Locking LUKS crypt volume '${LUKS}':"
+#      /sbin/cryptsetup luksClose ${LUKS}
+#    elif echo $OPTS | grep -wq swap ; then
+#      # If any of the volumes was used as encrypted swap,
+#      # then run mkswap on the underlying device -
+#      # in case other Linux installations on this computer should use it:
+#      echo "Erasing encrypted swap '${LUKS}' and restoring normal swap on ${DEV}:"
+#      /sbin/cryptsetup remove ${LUKS}
+#      mkswap $DEV
+#    fi
+#  done
+#fi
+#
+## Deactivate LVM volume groups:
+#if [ -r /etc/lvmtab -o -d /etc/lvm/backup ]; then
+#  echo "Deactivating LVM volume groups:"
+#  /sbin/vgchange -an --ignorelockingfailure
+#fi
+#
+## This never hurts again (especially since root-on-LVM always fails
+## to deactivate the / logical volume...  but at least it was
+## remounted as read-only first)
+#/bin/sync
+#
+## sleep 3 fixes problems with some hard drives that don't
+## otherwise finish syncing before reboot or poweroff
+#/bin/sleep 3
+#
+## This is to ensure all processes have completed on SMP machines:
+#wait
+#
+#if [ -x /sbin/genpowerd ]; then
+#  # See if this is a powerfail situation:
+#  if /bin/egrep -q "FAIL|SCRAM" /etc/upsstatus 2> /dev/null ; then
+#    # Signal UPS to shut off the inverter:
+#    /sbin/genpowerd -k
+#    if [ ! $? = 0 ]; then
+#      echo
+#      echo "There was an error signaling the UPS."
+#      echo "Perhaps you need to edit /etc/genpowerd.conf to configure"
+#      echo "the serial line and UPS type."
+#      # Wasting 15 seconds of precious power:
+#      /bin/sleep 15
+#    fi
+#  fi
+#fi
+#
+## Now halt (poweroff with APM or ACPI enabled kernels) or reboot.
+#if [ "$command" = "reboot" ]; then
+#  echo "Rebooting."
+#  /sbin/reboot
+#else
+#  /sbin/poweroff
+#fi
+
+EOF
+
+chmod +x $rootfs/etc/rc.d/rc.{S,6}
+
+# disable pointless services in a container
+chmod -x $rootfs/etc/rc.d/rc.{udev,loop}
+
+# some other small fixes for a clean boot
+cat >$rootfs/tmp/rcs.patch <<'EOF'
+--- ./etc/rc.d/rc.inet1.orig    2011-07-15 12:32:27.000000000 +0200
++++ ./etc/rc.d/rc.inet1 2011-07-15 12:03:48.000000000 +0200
+@@ -82,14 +82,14 @@
+     [ "${IFNAME[$i]}" = "${1}" ] && break
+     i=$(($i+1))
+   done
+-  # If the interface isn't in the kernel yet (but there's an alias for it in
+-  # modules.conf), then it should be loaded first:
+-  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
+-    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
+-      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
+-      /sbin/modprobe ${1}
+-    fi
+-  fi
++#  # If the interface isn't in the kernel yet (but there's an alias for it in
++#  # modules.conf), then it should be loaded first:
++#  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
++#    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
++#      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
++#      /sbin/modprobe ${1}
++#    fi
++#  fi
+   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
+     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
+       ! /sbin/ifconfig ${1} | grep "inet addr" 1> /dev/null ; then # interface not up or not configured
+--- ./etc/rc.d/rc.M.orig        2011-07-15 12:32:00.000000000 +0200
++++ ./etc/rc.d/rc.M     2011-07-15 12:19:41.000000000 +0200
+@@ -20,9 +20,9 @@
+   /sbin/ldconfig &
+ fi
+ 
+-# Screen blanks after 15 minutes idle time, and powers down in one hour
+-# if the kernel supports APM or ACPI power management:
+-/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++## Screen blanks after 15 minutes idle time, and powers down in one hour
++## if the kernel supports APM or ACPI power management:
++#/bin/setterm -blank 15 -powersave powerdown -powerdown 60
+ 
+ # Set the hostname.
+ if [ -r /etc/HOSTNAME ]; then
+EOF
+( cd $rootfs ; patch -s -p1 < tmp/rcs.patch ; rm tmp/rcs.patch )
+
+# set a default combination for the luggage
+echo
+echo "root:root" | chroot $rootfs chpasswd
+echo "Root password is 'root', please change !"
+
+return 0
+}
+
+download_slackware()
+{
+subarch=
+if [ "$arch" == "x86_64" ]; then
+	subarch=64
+fi
+
+# thanks to Vincent Batts for this list of packages
+# (that I modified a little :P)
+# http://connie.slackware.com/~vbatts/minimal/
+PACKAGES=" \
+a/aaa_base-$suite-$arch-3.txz \
+a/aaa_elflibs-$suite-$arch-7.txz \
+a/aaa_terminfo-5.8-$arch-1.txz \
+a/bash-4.1.010-$arch-1.txz \
+a/bin-11.1-$arch-1.txz \
+a/bzip2-1.0.6-$arch-1.txz \
+a/coreutils-8.11-$arch-1.txz \
+n/dhcpcd-5.2.11-$arch-1.txz \
+a/dialog-1.1_20100428-$arch-2.txz \
+ap/diffutils-3.0-$arch-1.txz \
+a/e2fsprogs-1.41.14-$arch-1.txz \
+a/elvis-2.2_0-$arch-2.txz \
+a/etc-13.013-$arch-1.txz \
+a/findutils-4.4.2-$arch-1.txz \
+a/gawk-3.1.8-$arch-1.txz \
+a/glibc-solibs-2.13-$arch-4.txz \
+n/gnupg-1.4.11-$arch-1.txz \
+a/grep-2.7-$arch-1.txz \
+a/gzip-1.4-$arch-1.tgz \
+n/iputils-s20101006-$arch-1.txz \
+a/logrotate-3.7.8-$arch-1.txz \
+n/net-tools-1.60-$arch-3.txz \
+n/network-scripts-13.0-noarch-3.txz \
+n/openssh-5.8p1-$arch-1.txz \
+a/openssl-solibs-0.9.8r-$arch-3.txz \
+a/pkgtools-$suite-noarch-9.tgz \
+a/procps-3.2.8-$arch-3.txz \
+a/sed-4.2.1-$arch-1.txz \
+a/shadow-4.1.4.3-$arch-2.txz \
+a/sharutils-4.11-$arch-1.txz \
+ap/slackpkg-2.82.0-noarch-5.tgz \
+a/sysklogd-1.5-$arch-1.txz \
+a/sysvinit-2.86-$arch-6.txz \
+a/sysvinit-functions-8.53-$arch-2.txz \
+a/sysvinit-scripts-1.2-noarch-43.txz \
+a/tar-1.26-$arch-1.tgz \
+a/udev-165-$arch-2.txz \
+a/util-linux-2.19-$arch-1.txz \
+n/wget-1.12-$arch-1.txz \
+a/which-2.20-$arch-1.txz \
+a/xz-5.0.2-$arch-1.tgz"
+
+# check the slackware packages aren't already downloaded
+mkdir -p "$cache/partial-$suite-$arch"
+if [ $? -ne 0 ]; then
+	echo "Failed to create '$cache/partial-$suite-$arch' directory"
+	return 1
+fi
+
+# download the packages into a cache folder
+echo "Downloading some slackware minimal packages..."
+(
+cd $cache/partial-$suite-$arch
+for package in $PACKAGES; do
+	wget -nv -c $MIRROR/slackware$subarch-$suite/slackware$subarch/$package
+done
+)
+
+if [ $? -ne 0 ]; then
+	echo "Failed to download the packages, aborting."
+	return 1
+fi
+
+mv "$cache/partial-$suite-$arch" "$cache/cache-$suite-$arch"
+echo "Download complete."
+echo
+
+return 0
+}
+
+install_packages()
+{
+rootfs=$1
+for package in $cache/cache-$suite-$arch/*.t?z ; do
+	installpkg -root $rootfs -terse -priority ADD $package
+done
+
+return 0
+}
+
+copy_slackware()
+{
+rootfs=$1
+
+# make a local copy of the minislackware
+echo -n "Copying rootfs to $rootfs..."
+cp -a "$cache/rootfs-$suite-$arch" $rootfs || return 1
+return 0
+}
+
+install_slackware()
+{
+rootfs=$1
+mkdir -p /var/lock/subsys/
+(
+flock -n -x 200
+if [ $? -ne 0 ]; then
+	echo "Cache repository is busy."
+	return 1
+fi
+
+echo "Checking cache download in $cache/cache-$suite-$arch ... "
+if [ ! -e "$cache/cache-$suite-$arch" ]; then
+	download_slackware
+	if [ $? -ne 0 ]; then
+		echo "Failed to download slackware base packages"
+		return 1
+	fi
+fi
+
+echo "Installing packages in $cache/rootfs-$suite-$arch ... "
+if [ -e "$cache/rootfs-$suite-$arch" ]; then
+	echo "cleaning up existing $cache/rootfs-$suite-$arch ... "
+	rm -fR "$cache/rootfs-$suite-$arch"
+fi
+mkdir -p "$cache/rootfs-$suite-$arch"
+install_packages $cache/rootfs-$suite-$arch
+
+return 0
+
+) 200>/var/lock/subsys/lxc
+
+return $?
+}
+
+copy_configuration()
+{
+path=$1
+rootfs=$2
+name=$3
+
+cat <<EOF >> $path/config
+lxc.utsname = $name
+lxc.tty = 6
+lxc.pts = 1024
+lxc.rootfs = $rootfs
+lxc.cgroup.devices.deny = a
+# /dev/null and zero
+lxc.cgroup.devices.allow = c 1:3 rwm
+lxc.cgroup.devices.allow = c 1:5 rwm
+# consoles
+lxc.cgroup.devices.allow = c 5:1 rwm
+lxc.cgroup.devices.allow = c 5:0 rwm
+lxc.cgroup.devices.allow = c 4:0 rwm
+lxc.cgroup.devices.allow = c 4:1 rwm
+# /dev/{,u}random
+lxc.cgroup.devices.allow = c 1:9 rwm
+lxc.cgroup.devices.allow = c 1:8 rwm
+lxc.cgroup.devices.allow = c 136:* rwm
+lxc.cgroup.devices.allow = c 5:2 rwm
+# rtc
+lxc.cgroup.devices.allow = c 254:0 rwm
+
+# mounts point
+lxc.mount.entry=proc $rootfs/proc proc nodev,noexec,nosuid 0 0
+lxc.mount.entry=devpts $rootfs/dev/pts devpts defaults 0 0
+lxc.mount.entry=sysfs $rootfs/sys sysfs defaults  0 0
+
+# better safe than sorry: comment out only if brave
+lxc.cap.drop=sys_admin
+EOF
+
+if [ $? -ne 0 ]; then
+	echo "Failed to add configuration"
+	return 1
+fi
+
+return 0
+}
+
+clean()
+{
+if [ ! -e $cache ]; then
+	exit 0
+fi
+
+# lock, so we won't purge while someone is creating a repository
+(
+flock -n -x 200
+if [ $? != 0 ]; then
+	echo "Cache repository is busy."
+	exit 1
+fi
+
+echo -n "Purging the download cache..."
+rm --preserve-root --one-file-system -rf $cache && echo "Done." || exit 1
+exit 0
+
+) 200>/var/lock/subsys/lxc
+}
+
+usage()
+{
+cat <<EOF
+$1 -h|--help -p|--path=<path> --clean
+EOF
+return 0
+}
+
+set -e
+
+options=$(getopt -o hp:n:c -l help,path:,name:,clean -- "$@")
+if [ $? -ne 0 ]; then
+	usage $(basename $0)
+	exit 1
+fi
+eval set -- "$options"
+
+while true
+do
+case "$1" in
+        -h|--help)      usage $0 && exit 0;;
+        -p|--path)      path=$2; shift 2;;
+	-n|--name)      name=$2; shift 2;;
+	-c|--clean)     clean=$2; shift 2;;
+        --)             shift 1; break ;;
+        *)              break ;;
+esac
+done
+
+if [ ! -z "$clean" -a -z "$path" ]; then
+	clean || exit 1
+	exit 0
+fi
+
+type installpkg
+if [ $? -ne 0 ]; then
+	echo "'installpkg' command is missing"
+	exit 1
+fi
+
+if [ -z "$path" ]; then
+	echo "'path' parameter is required"
+	exit 1
+fi
+
+if [ "$(id -u)" != "0" ]; then
+	echo "This script should be run as 'root'"
+	exit 1
+fi
+
+if [ -z "$name" ]; then
+	# no name given? set a default one
+	name=minislack
+fi
+
+echo
+
+rootfs=$path/rootfs
+install_slackware $rootfs
+if [ $? -ne 0 ]; then
+	echo "failed to install slackware"
+	exit 1
+fi
+
+echo
+
+configure_slackware $cache/rootfs-$suite-$arch $name
+if [ $? -ne 0 ]; then
+	echo "failed to configure slackware for a container"
+	exit 1
+fi
+
+echo
+
+rootfs=$path/rootfs
+copy_slackware $rootfs
+if [ $? -ne 0 ]; then
+	echo "Failed to copy rootfs"
+	return 1
+fi
+
+echo
+
+copy_configuration $path $rootfs $name
+if [ $? -ne 0 ]; then
+	echo "failed to write configuration file"
+	exit 1
+fi
+
+echo
+echo "Slackware mini container $name creation completed."
+
+if [ ! -z $clean ]; then
+	clean || exit 1
+	exit 0
+fi
+
