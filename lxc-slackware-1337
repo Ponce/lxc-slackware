@@ -107,7 +107,8 @@ mknod -m 666 ${DEV}/full c 1 7
 mknod -m 600 ${DEV}/initctl p
 mknod -m 666 ${DEV}/ptmx c 5 2
 
-echo "Adding an etc/fstab that must be edited later with the full path of the container."
+echo "Adding an etc/fstab that must be edited later"
+echo "with the full path of the container if you move it."
 cat >$rootfs/etc/fstab <<EOF
 none $rootfs/dev/pts devpts defaults 0 0
 none $rootfs/proc    proc   defaults 0 0
@@ -957,6 +958,10 @@ rootfs=$1
 # make a local copy of the minislackware
 echo -n "Copying rootfs to $rootfs..."
 cp -a "$cache/rootfs-$suite-$arch" $rootfs || return 1
+
+# fix fstab with the actual path
+sed -i -e "s|$cache/rootfs-$suite-$arch|$rootfs|" $rootfs/etc/fstab
+
 return 0
 }
 
