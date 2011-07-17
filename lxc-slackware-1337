@@ -869,7 +869,7 @@ fi
 # thanks to Vincent Batts for this list of packages
 # (that I modified a little :P)
 # http://connie.slackware.com/~vbatts/minimal/
-PACKAGES=" \
+PACKAGES={PACKAGES:-" \
 a/aaa_base-$suite-$arch-3.txz \
 a/aaa_elflibs-$suite-$arch-7.txz \
 a/aaa_terminfo-5.8-$arch-1.txz \
@@ -910,7 +910,7 @@ a/udev-165-$arch-2.txz \
 a/util-linux-2.19-$arch-1.txz \
 n/wget-1.12-$arch-1.txz \
 a/which-2.20-$arch-1.txz \
-a/xz-5.0.2-$arch-1.tgz"
+a/xz-5.0.2-$arch-1.tgz"}
 
 # check the slackware packages aren't already downloaded
 mkdir -p "$cache/partial-$suite-$arch"
