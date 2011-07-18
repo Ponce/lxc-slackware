@@ -411,6 +411,9 @@ echo "Turning off swap."
 echo "Unmounting local file systems."
 /bin/umount -v -a -t proc,sysfs
 
+# confirm successful shutdown
+echo ; echo "* container stopped. *"
+
 EOF
 
 chmod +x $rootfs/etc/rc.d/rc.{S,6}
@@ -462,6 +465,9 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  if [ -r /etc/HOSTNAME ]; then
 EOF
 ( cd $rootfs ; patch -s -p1 < tmp/rcs.patch ; rm tmp/rcs.patch )
+
+# add a message to rc.local that confirms successful container startup
+echo "echo \"* container $name started. *\"" >> $rootfs/etc/rc.d/rc.local
 
 # set a default combination for the luggage
 echo
