@@ -487,7 +487,7 @@ fi
 # thanks to Vincent Batts for this list of packages
 # (that I modified a little :P)
 # http://connie.slackware.com/~vbatts/minimal/
-PACKAGES={PACKAGES:-" \
+PACKAGES=${PACKAGES:-" \
 a/aaa_base-$suite-$arch-3.txz \
 a/aaa_elflibs-$suite-$arch-7.txz \
 a/aaa_terminfo-5.8-$arch-1.txz \
