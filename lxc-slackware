@@ -330,7 +330,7 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
 +echo ; echo "* container stopped. *" ; echo
 +
 --- ./etc/rc.d/rc.M.orig	2011-07-20 11:13:38.332252512 +0200
-+++ ./etc/rc.d/rc.M	2011-07-20 11:14:26.553649659 +0200
++++ ./etc/rc.d/rc.M	2011-07-20 13:22:23.206678301 +0200
 @@ -10,6 +10,10 @@
  # Author:	Fred N. van Kempen, <waltje@uwalt.nl.mugnet.org>
  #		Heavily modified by Patrick Volkerding <volkerdi@slackware.com>
@@ -342,7 +342,7 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  
  # Tell the viewers what's going to happen.
  echo "Going multiuser..."
-@@ -20,10 +24,15 @@
+@@ -20,6 +24,9 @@
    /sbin/ldconfig &
  fi
  
@@ -352,12 +352,15 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  # Screen blanks after 15 minutes idle time, and powers down in one hour
  # if the kernel supports APM or ACPI power management:
  /bin/setterm -blank 15 -powersave powerdown -powerdown 60
+@@ -33,6 +40,8 @@
+   /bin/hostname darkstar
+ fi
  
 +fi # end container check
 +
- # Set the hostname.
- if [ -r /etc/HOSTNAME ]; then
-   /bin/hostname $(cat /etc/HOSTNAME | cut -f1 -d .)
+ # Set the permissions on /var/log/dmesg according to whether the kernel
+ # permits non-root users to access kernel dmesg information:
+ if [ -r /proc/sys/kernel/dmesg_restrict ]; then
 --- ./etc/rc.d/rc.inet1.orig	2011-07-20 11:13:56.671023244 +0200
 +++ ./etc/rc.d/rc.inet1	2011-07-20 11:14:26.553649659 +0200
 @@ -3,6 +3,11 @@

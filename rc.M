@@ -31,8 +31,6 @@ if [ ! $CONTAINER ]; then
 # if the kernel supports APM or ACPI power management:
 /bin/setterm -blank 15 -powersave powerdown -powerdown 60
 
-fi # end container check
-
 # Set the hostname.
 if [ -r /etc/HOSTNAME ]; then
   /bin/hostname $(cat /etc/HOSTNAME | cut -f1 -d .)
@@ -41,6 +39,8 @@ else
   echo "darkstar.example.net" > /etc/HOSTNAME
   /bin/hostname darkstar
 fi
+
+fi # end container check
 
 # Set the permissions on /var/log/dmesg according to whether the kernel
 # permits non-root users to access kernel dmesg information:
