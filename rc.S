@@ -7,7 +7,7 @@
 # tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
 # based also on Chris Willing's modifications
 # http://www.vislab.uq.edu.au/howto/lxc/rc.S
-# a check for a container variable is made to jump unneeded sectons
+# a check for a container variable is made to jump unneeded sections
 
 CONTAINER=yes
 
