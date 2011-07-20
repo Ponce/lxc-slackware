@@ -13,6 +13,9 @@ CONTAINER=yes
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Try to mount /proc:
 /sbin/mount -v proc /proc -n -t proc 2> /dev/null
 
@@ -24,9 +27,6 @@ if [ -d /sys ]; then
     fi
   fi
 fi
-
-# container check
-if [ ! $CONTAINER ]; then
 
 # Load the loop device kernel module:
 if [ -x /etc/rc.d/rc.loop ]; then
@@ -263,8 +263,14 @@ fi # end container check
 
 # Any /etc/mtab that exists here is old, so we delete it to start over:
 /bin/rm -f /etc/mtab*
+
+# container check
+if [ ! $CONTAINER ]; then
+
 # Remounting the / partition will initialize the new /etc/mtab:
 /sbin/mount -w -o remount /
+
+fi # end container check
 
 # Read in the correct / filesystem complete with arguments so mount will
 # show them correctly. This does not stop those arguments from functioning
@@ -331,8 +337,6 @@ if grep -wq usbfs /proc/filesystems; then
   fi
 fi
 
-fi # end container check
-
 # Mount non-root file systems in fstab, but not NFS or SMB 
 # because TCP/IP is not yet configured, and not proc or sysfs
 # because those have already been mounted.  Also check that
@@ -347,9 +351,6 @@ if /bin/grep -wq devpts /proc/mounts ; then
 else
   /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
 fi
-
-# container check
-if [ ! $CONTAINER ]; then
 
 # Enable swapping again.  This is needed in case a swapfile is used,
 # as it can't be enabled until the filesystem it resides on has been

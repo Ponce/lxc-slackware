@@ -122,8 +122,94 @@ chmod -x $rootfs/etc/rc.d/rc.{udev,loop}
 # simplify rc.6 and rc.S, http://www.vislab.uq.edu.au/howto/lxc/create_container.html
 # and some other small fixes for a clean boot
 cat >$rootfs/tmp/rcs.patch <<'EOF'
---- ./etc/rc.d/rc.6.orig	2011-04-16 23:14:14.000000000 +0200
-+++ ./etc/rc.d/rc.6	2011-07-20 07:46:11.931853928 +0200
+--- ./etc/rc.d/rc.S.orig	2011-07-20 10:18:27.956637848 +0200
++++ ./etc/rc.d/rc.S	2011-07-20 10:44:26.973147462 +0200
+@@ -4,9 +4,18 @@
+ #
+ # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+ #
++# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
++# based also on Chris Willing's modifications
++# http://www.vislab.uq.edu.au/howto/lxc/rc.S
++# a check for a container variable is made to jump unneeded sections
++
++CONTAINER=yes
+ 
+ PATH=/sbin:/usr/sbin:/bin:/usr/bin
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Try to mount /proc:
+ /sbin/mount -v proc /proc -n -t proc 2> /dev/null
+ 
+@@ -250,16 +259,27 @@
+   read junk;
+ fi # Done checking root filesystem
+ 
++fi # end container check
++
+ # Any /etc/mtab that exists here is old, so we delete it to start over:
+ /bin/rm -f /etc/mtab*
++
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Remounting the / partition will initialize the new /etc/mtab:
+ /sbin/mount -w -o remount /
+ 
++fi # end container check
++
+ # Read in the correct / filesystem complete with arguments so mount will
+ # show them correctly. This does not stop those arguments from functioning
+ # but does prevent a small bug with /etc/mtab.
+ /bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Fix /etc/mtab to list sys and proc if they were not yet entered in
+ # /etc/mtab because / was still mounted read-only:
+ if [ -d /proc/sys ]; then
+@@ -337,6 +357,8 @@
+ # mounted read-write.
+ /sbin/swapon -a 2> /dev/null
+ 
++fi # end container check
++
+ # Clean up some temporary files:
+ rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
+   /etc/dhcpc/*.pid /etc/forcefsck /etc/fastboot \
+@@ -364,7 +386,7 @@
+ # if the first line of that file begins with the word 'Linux'.
+ # You are free to modify the rest of the file as you see fit.
+ if [ -x /bin/sed ]; then
+-  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
++  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
+ fi
+ 
+ # If there are SystemV init scripts for this runlevel, run them.
+@@ -372,6 +394,9 @@
+   . /etc/rc.d/rc.sysvinit
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Run serial port setup script:
+ # CAREFUL!  This can make some systems hang if the rc.serial script isn't
+ # set up correctly.  If this happens, you may have to edit the file from a
+@@ -380,6 +405,8 @@
+   sh /etc/rc.d/rc.serial start
+ fi
+ 
++fi # end container check
++
+ # Carry an entropy pool between reboots to improve randomness.
+ if [ -f /etc/random-seed ]; then
+   echo "Using /etc/random-seed to initialize /dev/urandom."
+--- ./etc/rc.d/rc.6.orig	2011-07-20 10:18:24.478681336 +0200
++++ ./etc/rc.d/rc.6	2011-07-20 10:44:26.973147462 +0200
 @@ -9,6 +9,12 @@
  # Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
  # Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
@@ -209,7 +295,7 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  # Carry a random seed between reboots.
  echo "Saving random seed from /dev/urandom in /etc/random-seed."
  # Use the pool size from /proc, or 512 bytes:
-@@ -195,14 +221,22 @@
+@@ -195,6 +221,9 @@
    rm -f /var/lock/subsys/*
  fi
  
@@ -219,19 +305,21 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  # Turn off swap:
  echo "Turning off swap."
  /sbin/swapoff -a
- /bin/sync
+@@ -206,9 +235,14 @@
+ echo "Remounting root filesystem read-only."
+ /bin/mount -v -n -o remount,ro /
  
 +fi # end container check
 +
- echo "Unmounting local file systems."
- /bin/umount -v -a -t no,proc,sysfs
+ # This never hurts:
+ /bin/sync
  
 +# container check
 +if [ ! $CONTAINER ]; then
 +
- echo "Remounting root filesystem read-only."
- /bin/mount -v -n -o remount,ro /
- 
+ # Close any volumes opened by cryptsetup:
+ if [ -f /etc/crypttab -a -x /sbin/cryptsetup ]; then
+   cat /etc/crypttab | grep -v "^#" | grep -v "^$" | while read line; do
 @@ -272,3 +306,8 @@
    /sbin/poweroff
  fi
@@ -239,106 +327,8 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
 +fi # end container check
 +
 +# confirm successful shutdown
-+echo ; echo "* container stopped. *"
++echo ; echo "* container stopped. *" ; echo
 +
---- ./etc/rc.d/rc.S.orig	2011-04-23 21:37:43.000000000 +0200
-+++ ./etc/rc.d/rc.S	2011-07-20 07:46:11.931853928 +0200
-@@ -4,6 +4,12 @@
- #
- # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
- #
-+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
-+# based also on Chris Willing's modifications
-+# http://www.vislab.uq.edu.au/howto/lxc/rc.S
-+# a check for a container variable is made to jump unneeded sections
-+
-+CONTAINER=yes
- 
- PATH=/sbin:/usr/sbin:/bin:/usr/bin
- 
-@@ -19,6 +25,9 @@
-   fi
- fi
- 
-+# container check
-+if [ ! $CONTAINER ]; then
-+
- # Load the loop device kernel module:
- if [ -x /etc/rc.d/rc.loop ]; then
-   . /etc/rc.d/rc.loop start
-@@ -250,6 +259,8 @@
-   read junk;
- fi # Done checking root filesystem
- 
-+fi # end container check
-+
- # Any /etc/mtab that exists here is old, so we delete it to start over:
- /bin/rm -f /etc/mtab*
- # Remounting the / partition will initialize the new /etc/mtab:
-@@ -260,6 +271,9 @@
- # but does prevent a small bug with /etc/mtab.
- /bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
- 
-+# container check
-+if [ ! $CONTAINER ]; then
-+
- # Fix /etc/mtab to list sys and proc if they were not yet entered in
- # /etc/mtab because / was still mounted read-only:
- if [ -d /proc/sys ]; then
-@@ -317,6 +331,8 @@
-   fi
- fi
- 
-+fi # end container check
-+
- # Mount non-root file systems in fstab, but not NFS or SMB 
- # because TCP/IP is not yet configured, and not proc or sysfs
- # because those have already been mounted.  Also check that
-@@ -332,11 +348,16 @@
-   /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
- fi
- 
-+# container check
-+if [ ! $CONTAINER ]; then
-+
- # Enable swapping again.  This is needed in case a swapfile is used,
- # as it can't be enabled until the filesystem it resides on has been
- # mounted read-write.
- /sbin/swapon -a 2> /dev/null
- 
-+fi # end container check
-+
- # Clean up some temporary files:
- rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
-   /etc/dhcpc/*.pid /etc/forcefsck /etc/fastboot \
-@@ -364,7 +385,7 @@
- # if the first line of that file begins with the word 'Linux'.
- # You are free to modify the rest of the file as you see fit.
- if [ -x /bin/sed ]; then
--  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
-+  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
- fi
- 
- # If there are SystemV init scripts for this runlevel, run them.
-@@ -372,6 +393,9 @@
-   . /etc/rc.d/rc.sysvinit
- fi
- 
-+# container check
-+if [ ! $CONTAINER ]; then
-+
- # Run serial port setup script:
- # CAREFUL!  This can make some systems hang if the rc.serial script isn't
- # set up correctly.  If this happens, you may have to edit the file from a
-@@ -380,6 +404,8 @@
-   sh /etc/rc.d/rc.serial start
- fi
- 
-+fi # end container check
-+
- # Carry an entropy pool between reboots to improve randomness.
- if [ -f /etc/random-seed ]; then
-   echo "Using /etc/random-seed to initialize /dev/urandom."
 --- ./etc/rc.d/rc.inet1.orig    2011-07-15 12:32:27.000000000 +0200
 +++ ./etc/rc.d/rc.inet1 2011-07-15 12:03:48.000000000 +0200
 @@ -82,14 +82,14 @@
@@ -383,7 +373,7 @@ EOF
 ( cd $rootfs ; patch -s -p1 < tmp/rcs.patch ; rm tmp/rcs.patch )
 
 # add a message to rc.local that confirms successful container startup
-echo "echo \"* container $name started. *\"" >> $rootfs/etc/rc.d/rc.local
+echo ; echo "echo \"* container $name started. *\"" >> $rootfs/etc/rc.d/rc.local ; echo
 
 # set a default combination for the luggage
 echo

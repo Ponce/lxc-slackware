@@ -229,19 +229,19 @@ echo "Turning off swap."
 /sbin/swapoff -a
 /bin/sync
 
-fi # end container check
-
 echo "Unmounting local file systems."
 /bin/umount -v -a -t no,proc,sysfs
-
-# container check
-if [ ! $CONTAINER ]; then
 
 echo "Remounting root filesystem read-only."
 /bin/mount -v -n -o remount,ro /
 
+fi # end container check
+
 # This never hurts:
 /bin/sync
+
+# container check
+if [ ! $CONTAINER ]; then
 
 # Close any volumes opened by cryptsetup:
 if [ -f /etc/crypttab -a -x /sbin/cryptsetup ]; then
@@ -309,5 +309,5 @@ fi
 fi # end container check
 
 # confirm successful shutdown
-echo ; echo "* container stopped. *"
+echo ; echo "* container stopped. *" ; echo
 
