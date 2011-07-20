@@ -3,6 +3,11 @@
 # This script is used to bring up the various network interfaces.
 #
 # @(#)/etc/rc.d/rc.inet1 10.2  Sun Jul 24 12:45:56 PDT 2005  (pjv)
+#
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# a check for a CONTAINER variable is made to jump unneeded sections
+
+CONTAINER=yes
 
 ############################
 # READ NETWORK CONFIG FILE #
@@ -82,6 +87,10 @@ if_up() {
     [ "${IFNAME[$i]}" = "${1}" ] && break
     i=$(($i+1))
   done
+
+  # container check
+  if [ ! $CONTAINER ]; then
+
   # If the interface isn't in the kernel yet (but there's an alias for it in
   # modules.conf), then it should be loaded first:
   if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
@@ -90,6 +99,9 @@ if_up() {
       /sbin/modprobe ${1}
     fi
   fi
+
+  fi # end container check
+
   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
       ! /sbin/ifconfig ${1} | grep "inet addr" 1> /dev/null ; then # interface not up or not configured

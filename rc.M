@@ -10,6 +10,10 @@
 # Author:	Fred N. van Kempen, <waltje@uwalt.nl.mugnet.org>
 #		Heavily modified by Patrick Volkerding <volkerdi@slackware.com>
 #
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# a check for a CONTAINER variable is made to jump unneeded sections
+
+CONTAINER=yes
 
 # Tell the viewers what's going to happen.
 echo "Going multiuser..."
@@ -20,9 +24,14 @@ if [ -x /sbin/ldconfig ]; then
   /sbin/ldconfig &
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Screen blanks after 15 minutes idle time, and powers down in one hour
 # if the kernel supports APM or ACPI power management:
 /bin/setterm -blank 15 -powersave powerdown -powerdown 60
+
+fi # end container check
 
 # Set the hostname.
 if [ -r /etc/HOSTNAME ]; then
