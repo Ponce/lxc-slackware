@@ -23,7 +23,7 @@
 # template for slackware 13.37 by ponce <matteo.bernardini@gmail.com>
 # based on the debian one
 
-suite=13.37
+SUITE=${SUITE:-13.37}
 cache="/var/cache/lxc/slackware"
 MIRROR=${MIRROR:-http://slackware.osuosl.org}
 
@@ -116,313 +116,229 @@ none $rootfs/sys     sysfs  defaults 0 0
 none /dev/shm tmpfs  defaults 0 0
 EOF
 
-# adding simplified versions of rc.S and rc.6
-# inspiration source http://www.vislab.uq.edu.au/howto/lxc/create_container.html
-
-cat >$rootfs/etc/rc.d/rc.S <<'EOF'
-#!/bin/sh
-#
-# /etc/rc.d/rc.S:  System initialization script.
-#
-# Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
-#
-# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
-# based also on Chris Willing's modifications
-# http://www.vislab.uq.edu.au/howto/lxc/rc.S
-# unneeded parts are cutted off for space saving.
-
-PATH=/sbin:/usr/sbin:/bin:/usr/bin
-
-# Try to mount /proc:
-/sbin/mount -v proc /proc -n -t proc 2> /dev/null
-
-# Mount sysfs next, if the kernel supports it:
-if [ -d /sys ]; then
-  if grep -wq sysfs /proc/filesystems ; then
-    if ! grep -wq sysfs /proc/mounts ; then
-      /sbin/mount -v sysfs /sys -n -t sysfs
-    fi
-  fi
-fi
-
-# Any /etc/mtab that exists here is old, so we delete it to start over:
-/bin/rm -f /etc/mtab*
-# Remounting the / partition will initialize the new /etc/mtab:
-#/sbin/mount -w -o remount /
-/usr/bin/touch /etc/mtab
-
-# Read in the correct / filesystem complete with arguments so mount will
-# show them correctly. This does not stop those arguments from functioning
-# but does prevent a small bug with /etc/mtab.
-/bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
-
-# Fix /etc/mtab to list sys and proc if they were not yet entered in
-# /etc/mtab because / was still mounted read-only:
-if [ -d /proc/sys ]; then
-  /sbin/mount -f proc /proc -t proc
-fi
-if [ -d /sys/bus ]; then
-  /sbin/mount -f sysfs /sys -t sysfs
-fi
-
-# Mount non-root file systems in fstab, but not NFS or SMB 
-# because TCP/IP is not yet configured, and not proc or sysfs
-# because those have already been mounted.  Also check that
-# devpts is not already mounted before attempting to mount
-# it.  With a 2.6.x or newer kernel udev mounts devpts.
-# We also need to wait a little bit to let USB and other
-# hotplugged devices settle (sorry to slow down the boot):
-echo "Mounting non-root local filesystems:"
-sleep 3
-if /bin/grep -wq devpts /proc/mounts ; then
-  /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs,nodevpts
-else
-  /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
-fi
-
-# Clean up some temporary files:
-rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
-  /etc/dhcpc/*.pid /etc/forcefsck /etc/fastboot \
-  /var/state/saslauthd/saslauthd.pid \
-  /tmp/.Xauth* 1> /dev/null 2> /dev/null
-  ( cd /var/log/setup/tmp && rm -rf * )
-  ( cd /tmp && rm -rf kde-[a-zA-Z]* ksocket-[a-zA-Z]* hsperfdata_[a-zA-Z]* plugtmp* )
-
-# Create /tmp/{.ICE-unix,.X11-unix} if they are not present:
-if [ ! -e /tmp/.ICE-unix ]; then
-  mkdir -p /tmp/.ICE-unix
-  chmod 1777 /tmp/.ICE-unix
-fi
-if [ ! -e /tmp/.X11-unix ]; then
-  mkdir -p /tmp/.X11-unix
-  chmod 1777 /tmp/.X11-unix
-fi
-
-# Create a fresh utmp file:
-touch /var/run/utmp
-chown root:utmp /var/run/utmp
-chmod 664 /var/run/utmp
-
-# Update the current kernel level in the /etc/motd (Message Of The Day) file,
-# if the first line of that file begins with the word 'Linux'.
-# You are free to modify the rest of the file as you see fit.
-if [ -x /bin/sed ]; then
-  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
-fi
-
-# If there are SystemV init scripts for this runlevel, run them.
-if [ -x /etc/rc.d/rc.sysvinit ]; then
-  . /etc/rc.d/rc.sysvinit
-fi
-
-# Carry an entropy pool between reboots to improve randomness.
-if [ -f /etc/random-seed ]; then
-  echo "Using /etc/random-seed to initialize /dev/urandom."
-  cat /etc/random-seed > /dev/urandom
-fi
-# Use the pool size from /proc, or 512 bytes:
-if [ -r /proc/sys/kernel/random/poolsize ]; then
-  dd if=/dev/urandom of=/etc/random-seed count=1 bs=$(cat /proc/sys/kernel/random/poolsize) 2> /dev/null
-else
-  dd if=/dev/urandom of=/etc/random-seed count=1 bs=512 2> /dev/null
-fi
-chmod 600 /etc/random-seed
-EOF
-
-cat >$rootfs/etc/rc.d/rc.6 <<'EOF'
-#! /bin/sh
-#
-# rc.6		This file is executed by init when it goes into runlevel
-#		0 (halt) or runlevel 6 (reboot). It kills all processes,
-#		unmounts file systems and then either halts or reboots.
-#
-# Version:	@(#)/etc/rc.d/rc.6	2.47 Sat Jan 13 13:37:26 PST 2001
-#
-# Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
-# Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
-#
-# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
-# based also on Chris Willing's modifications
-# http://www.vislab.uq.edu.au/howto/lxc/rc.6
-# unneeded parts are cutted off for space saving.
-
-# Set the path.
-PATH=/sbin:/etc:/bin:/usr/bin
-
-# If there are SystemV init scripts for this runlevel, run them.
-if [ -x /etc/rc.d/rc.sysvinit ]; then
-  . /etc/rc.d/rc.sysvinit
-fi
-
-# Set linefeed mode to avoid staircase effect.
-/bin/stty onlcr
-
-echo "Running shutdown script $0:"
-
-# Find out how we were called.
-case "$0" in
-	*0)
-		command="halt"
-		;;
-	*6)
-		command=reboot
-		;;
-	*)
-		echo "$0: call me as \"rc.0\" or \"rc.6\" please!"
-		exit 1
-		;;
-esac
-
-# Run any local shutdown scripts:
-if [ -x /etc/rc.d/rc.local_shutdown ]; then
-  /etc/rc.d/rc.local_shutdown stop
-fi
-
-# Stop the Apache web server:
-if [ -x /etc/rc.d/rc.httpd ]; then
-  /etc/rc.d/rc.httpd stop
-fi
-
-# Stop the MySQL database:
-if [ -r /var/run/mysql/mysql.pid ]; then
-  . /etc/rc.d/rc.mysqld stop
-fi
-
-# Stop the Samba server:
-if [ -x /etc/rc.d/rc.samba ]; then
-  . /etc/rc.d/rc.samba stop
-fi
-
-# Shut down the NFS server:
-if [ -x /etc/rc.d/rc.nfsd ]; then
-  /etc/rc.d/rc.nfsd stop
-fi
-
-# Shut down the SSH server:
-if [ -x /etc/rc.d/rc.sshd ]; then
-  /etc/rc.d/rc.sshd stop
-fi
-
-# Shut down the SASL authentication daemon:
-if [ -x /etc/rc.d/rc.saslauthd ]; then
-  /etc/rc.d/rc.saslauthd stop
-fi
-
-# Shut down OpenLDAP:
-if [ -x /etc/rc.d/rc.openldap ]; then
-  /etc/rc.d/rc.openldap stop
-fi
-
-# Stop D-Bus:
-if [ -x /etc/rc.d/rc.messagebus ]; then
-  sh /etc/rc.d/rc.messagebus stop
-fi
-
-# Kill any processes (typically gam) that would otherwise prevent
-# unmounting NFS volumes:
-unset FUSER_DELAY
-for dir in $(/bin/mount | grep 'type nfs' | cut -d ' ' -f 3 ) ; do
-  echo "Killing processes holding NFS mount $dir open..."
-  # Background this to prevent fuser from also blocking shutdown:
-  /usr/bin/fuser -k -m $dir &
-  FUSER_DELAY=5
-done
-# If fuser was run, let it have some delay:
-if [ ! -z "$FUSER_DELAY" ]; then
-  sleep $FUSER_DELAY
-fi
-
-# Unmount any NFS, SMB, or CIFS filesystems:
-echo "Unmounting remote filesystems."
-/bin/umount -v -a -r -t nfs,smbfs,cifs
-
-# Try to shut down pppd:
-PS="$(ps ax)"
-if echo "$PS" | /bin/grep -q -w pppd ; then
-  if [ -x /usr/sbin/ppp-off ]; then
-    /usr/sbin/ppp-off
-  fi
-fi
-
-# Bring down the networking system, but first make sure that this
-# isn't a diskless client with the / partition mounted via NFS:
-if ! /bin/mount | /bin/grep -q 'on / type nfs' ; then
-  if [ -x /etc/rc.d/rc.inet1 ]; then
-    . /etc/rc.d/rc.inet1 stop
-  fi
-fi
-
-# In case dhcpcd might have been manually started on the command line,
-# look for the .pid file, and shut dhcpcd down if it's found:
-if /bin/ls /etc/dhcpc/*.pid 1> /dev/null 2> /dev/null ; then
-  /sbin/dhcpcd -k 1> /dev/null 2> /dev/null
-  # A little time for /etc/resolv.conf and/or other files to
-  # restore themselves.
-  sleep 2
-fi
-
-# Turn off process accounting:
-if [ -x /sbin/accton -a -r /var/log/pacct ]; then
-  /sbin/accton off
-fi
-
-# Kill all processes.
-# INIT is supposed to handle this entirely now, but this didn't always
-# work correctly without this second pass at killing off the processes.
-# Since INIT already notified the user that processes were being killed,
-# we'll avoid echoing this info this time around.
-if [ ! "$1" = "fast" ]; then # shutdown did not already kill all processes
-  /sbin/killall5 -15 
-  /bin/sleep 5
-  /sbin/killall5 -9
-fi
-
-# Try to turn off quota.
-if /bin/grep -q quota /etc/fstab ; then
-  if [ -x /sbin/quotaoff ]; then
-    echo "Turning off filesystem quotas."
-    /sbin/quotaoff -a
-  fi
-fi
-
-# Carry a random seed between reboots.
-echo "Saving random seed from /dev/urandom in /etc/random-seed."
-# Use the pool size from /proc, or 512 bytes:
-if [ -r /proc/sys/kernel/random/poolsize ]; then
-  /bin/dd if=/dev/urandom of=/etc/random-seed count=1 bs=$(cat /proc/sys/kernel/random/poolsize) 2> /dev/null
-else
-  /bin/dd if=/dev/urandom of=/etc/random-seed count=1 bs=512 2> /dev/null
-fi
-/bin/chmod 600 /etc/random-seed
-
-# Before unmounting file systems write a reboot or halt record to wtmp.
-$command -w
-
-# Clear /var/lock/subsys.
-if [ -d /var/lock/subsys ]; then
-  rm -f /var/lock/subsys/*
-fi
-
-# Turn off swap:
-echo "Turning off swap."
-/sbin/swapoff -a
-/bin/sync
-
-echo "Unmounting local file systems."
-/bin/umount -v -a -t proc,sysfs
-
-# confirm successful shutdown
-echo ; echo "* container stopped. *"
-
-EOF
-
-chmod +x $rootfs/etc/rc.d/rc.{S,6}
-
 # disable pointless services in a container
 chmod -x $rootfs/etc/rc.d/rc.{udev,loop}
 
-# some other small fixes for a clean boot
+# simplify rc.6 and rc.S, http://www.vislab.uq.edu.au/howto/lxc/create_container.html
+# and some other small fixes for a clean boot
 cat >$rootfs/tmp/rcs.patch <<'EOF'
+--- ./etc/rc.d/rc.6.orig	2011-04-16 23:14:14.000000000 +0200
++++ ./etc/rc.d/rc.6	2011-07-20 07:46:11.931853928 +0200
+@@ -9,6 +9,12 @@
+ # Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
+ # Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+ #
++# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
++# based also on Chris Willing's modifications
++# http://www.vislab.uq.edu.au/howto/lxc/rc.6
++# a check for a container variable is made to jump unneeded sections
++
++CONTAINER=yes
+ 
+ # Set the path.
+ PATH=/sbin:/etc:/bin:/usr/bin
+@@ -37,6 +43,9 @@
+ 		;;
+ esac
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Save the system time to the hardware clock using hwclock --systohc.
+ if [ -x /sbin/hwclock ]; then
+   # Check for a broken motherboard RTC clock (where ioports for rtc are
+@@ -53,6 +62,8 @@
+   fi
+ fi
+ 
++fi # end container check
++
+ # Run any local shutdown scripts:
+ if [ -x /etc/rc.d/rc.local_shutdown ]; then
+   /etc/rc.d/rc.local_shutdown stop
+@@ -141,6 +152,9 @@
+   sleep 2
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Shut down PCMCIA devices:
+ if [ -x /etc/rc.d/rc.pcmcia ]; then
+   . /etc/rc.d/rc.pcmcia stop
+@@ -148,16 +162,23 @@
+   /bin/sleep 5
+ fi
+ 
++fi # end container check
++
+ # Turn off process accounting:
+ if [ -x /sbin/accton -a -r /var/log/pacct ]; then
+   /sbin/accton off
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Terminate acpid before syslog:
+ if [ -x /etc/rc.d/rc.acpid -a -r /var/run/acpid.pid ]; then # quit
+   . /etc/rc.d/rc.acpid stop
+ fi
+ 
++fi # end container check
++
+ # Kill all processes.
+ # INIT is supposed to handle this entirely now, but this didn't always
+ # work correctly without this second pass at killing off the processes.
+@@ -169,6 +190,9 @@
+   /sbin/killall5 -9
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Try to turn off quota.
+ if /bin/grep -q quota /etc/fstab ; then
+   if [ -x /sbin/quotaoff ]; then
+@@ -177,6 +201,8 @@
+   fi
+ fi
+ 
++fi # end container check
++
+ # Carry a random seed between reboots.
+ echo "Saving random seed from /dev/urandom in /etc/random-seed."
+ # Use the pool size from /proc, or 512 bytes:
+@@ -195,14 +221,22 @@
+   rm -f /var/lock/subsys/*
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Turn off swap:
+ echo "Turning off swap."
+ /sbin/swapoff -a
+ /bin/sync
+ 
++fi # end container check
++
+ echo "Unmounting local file systems."
+ /bin/umount -v -a -t no,proc,sysfs
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ echo "Remounting root filesystem read-only."
+ /bin/mount -v -n -o remount,ro /
+ 
+@@ -272,3 +306,8 @@
+   /sbin/poweroff
+ fi
+ 
++fi # end container check
++
++# confirm successful shutdown
++echo ; echo "* container stopped. *"
++
+--- ./etc/rc.d/rc.S.orig	2011-04-23 21:37:43.000000000 +0200
++++ ./etc/rc.d/rc.S	2011-07-20 07:46:11.931853928 +0200
+@@ -4,6 +4,12 @@
+ #
+ # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+ #
++# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
++# based also on Chris Willing's modifications
++# http://www.vislab.uq.edu.au/howto/lxc/rc.S
++# a check for a container variable is made to jump unneeded sections
++
++CONTAINER=yes
+ 
+ PATH=/sbin:/usr/sbin:/bin:/usr/bin
+ 
+@@ -19,6 +25,9 @@
+   fi
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Load the loop device kernel module:
+ if [ -x /etc/rc.d/rc.loop ]; then
+   . /etc/rc.d/rc.loop start
+@@ -250,6 +259,8 @@
+   read junk;
+ fi # Done checking root filesystem
+ 
++fi # end container check
++
+ # Any /etc/mtab that exists here is old, so we delete it to start over:
+ /bin/rm -f /etc/mtab*
+ # Remounting the / partition will initialize the new /etc/mtab:
+@@ -260,6 +271,9 @@
+ # but does prevent a small bug with /etc/mtab.
+ /bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Fix /etc/mtab to list sys and proc if they were not yet entered in
+ # /etc/mtab because / was still mounted read-only:
+ if [ -d /proc/sys ]; then
+@@ -317,6 +331,8 @@
+   fi
+ fi
+ 
++fi # end container check
++
+ # Mount non-root file systems in fstab, but not NFS or SMB 
+ # because TCP/IP is not yet configured, and not proc or sysfs
+ # because those have already been mounted.  Also check that
+@@ -332,11 +348,16 @@
+   /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Enable swapping again.  This is needed in case a swapfile is used,
+ # as it can't be enabled until the filesystem it resides on has been
+ # mounted read-write.
+ /sbin/swapon -a 2> /dev/null
+ 
++fi # end container check
++
+ # Clean up some temporary files:
+ rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
+   /etc/dhcpc/*.pid /etc/forcefsck /etc/fastboot \
+@@ -364,7 +385,7 @@
+ # if the first line of that file begins with the word 'Linux'.
+ # You are free to modify the rest of the file as you see fit.
+ if [ -x /bin/sed ]; then
+-  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
++  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
+ fi
+ 
+ # If there are SystemV init scripts for this runlevel, run them.
+@@ -372,6 +393,9 @@
+   . /etc/rc.d/rc.sysvinit
+ fi
+ 
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Run serial port setup script:
+ # CAREFUL!  This can make some systems hang if the rc.serial script isn't
+ # set up correctly.  If this happens, you may have to edit the file from a
+@@ -380,6 +404,8 @@
+   sh /etc/rc.d/rc.serial start
+ fi
+ 
++fi # end container check
++
+ # Carry an entropy pool between reboots to improve randomness.
+ if [ -f /etc/random-seed ]; then
+   echo "Using /etc/random-seed to initialize /dev/urandom."
 --- ./etc/rc.d/rc.inet1.orig    2011-07-15 12:32:27.000000000 +0200
 +++ ./etc/rc.d/rc.inet1 2011-07-15 12:03:48.000000000 +0200
 @@ -82,14 +82,14 @@
@@ -488,8 +404,8 @@ fi
 # (that I modified a little :P)
 # http://connie.slackware.com/~vbatts/minimal/
 PACKAGES=${PACKAGES:-" \
-a/aaa_base-$suite-$arch-3.txz \
-a/aaa_elflibs-$suite-$arch-7.txz \
+a/aaa_base-$SUITE-$arch-3.txz \
+a/aaa_elflibs-$SUITE-$arch-7.txz \
 a/aaa_terminfo-5.8-$arch-1.txz \
 a/bash-4.1.010-$arch-1.txz \
 a/bin-11.1-$arch-1.txz \
@@ -513,7 +429,7 @@ n/net-tools-1.60-$arch-3.txz \
 n/network-scripts-13.0-noarch-3.txz \
 n/openssh-5.8p1-$arch-1.txz \
 a/openssl-solibs-0.9.8r-$arch-3.txz \
-a/pkgtools-$suite-noarch-9.tgz \
+a/pkgtools-$SUITE-noarch-9.tgz \
 a/procps-3.2.8-$arch-3.txz \
 a/sed-4.2.1-$arch-1.txz \
 a/shadow-4.1.4.3-$arch-2.txz \
@@ -531,18 +447,18 @@ a/which-2.20-$arch-1.txz \
 a/xz-5.0.2-$arch-1.tgz"}
 
 # check the slackware packages aren't already downloaded
-mkdir -p "$cache/partial-$suite-$arch"
+mkdir -p "$cache/partial-$SUITE-$arch"
 if [ $? -ne 0 ]; then
-	echo "Failed to create '$cache/partial-$suite-$arch' directory"
+	echo "Failed to create '$cache/partial-$SUITE-$arch' directory"
 	return 1
 fi
 
 # download the packages into a cache folder
 echo "Downloading some slackware minimal packages..."
 (
-cd $cache/partial-$suite-$arch
+cd $cache/partial-$SUITE-$arch
 for package in $PACKAGES; do
-	wget -nv -c $MIRROR/slackware$subarch-$suite/slackware$subarch/$package
+	wget -nv -c $MIRROR/slackware$subarch-$SUITE/slackware$subarch/$package
 done
 )
 
@@ -551,7 +467,7 @@ if [ $? -ne 0 ]; then
 	return 1
 fi
 
-mv "$cache/partial-$suite-$arch" "$cache/cache-$suite-$arch"
+mv "$cache/partial-$SUITE-$arch" "$cache/cache-$SUITE-$arch"
 echo "Download complete."
 echo
 
@@ -561,7 +477,7 @@ return 0
 install_packages()
 {
 rootfs=$1
-for package in $cache/cache-$suite-$arch/*.t?z ; do
+for package in $cache/cache-$SUITE-$arch/*.t?z ; do
 	installpkg -root $rootfs -terse -priority ADD $package
 done
 
@@ -574,10 +490,10 @@ rootfs=$1
 
 # make a local copy of the minislackware
 echo -n "Copying rootfs to $rootfs..."
-cp -a "$cache/rootfs-$suite-$arch" $rootfs || return 1
+cp -a "$cache/rootfs-$SUITE-$arch" $rootfs || return 1
 
 # fix fstab with the actual path
-sed -i -e "s|$cache/rootfs-$suite-$arch|$rootfs|" $rootfs/etc/fstab
+sed -i -e "s|$cache/rootfs-$SUITE-$arch|$rootfs|" $rootfs/etc/fstab
 
 return 0
 }
@@ -593,8 +509,8 @@ if [ $? -ne 0 ]; then
 	return 1
 fi
 
-echo "Checking cache download in $cache/cache-$suite-$arch ... "
-if [ ! -e "$cache/cache-$suite-$arch" ]; then
+echo "Checking cache download in $cache/cache-$SUITE-$arch ... "
+if [ ! -e "$cache/cache-$SUITE-$arch" ]; then
 	download_slackware
 	if [ $? -ne 0 ]; then
 		echo "Failed to download slackware base packages"
@@ -602,13 +518,13 @@ if [ ! -e "$cache/cache-$suite-$arch" ]; then
 	fi
 fi
 
-echo "Installing packages in $cache/rootfs-$suite-$arch ... "
-if [ -e "$cache/rootfs-$suite-$arch" ]; then
-	echo "cleaning up existing $cache/rootfs-$suite-$arch ... "
-	rm -fR "$cache/rootfs-$suite-$arch"
+echo "Installing packages in $cache/rootfs-$SUITE-$arch ... "
+if [ -e "$cache/rootfs-$SUITE-$arch" ]; then
+	echo "cleaning up existing $cache/rootfs-$SUITE-$arch ... "
+	rm -fR "$cache/rootfs-$SUITE-$arch"
 fi
-mkdir -p "$cache/rootfs-$suite-$arch"
-install_packages $cache/rootfs-$suite-$arch
+mkdir -p "$cache/rootfs-$SUITE-$arch"
+install_packages $cache/rootfs-$SUITE-$arch
 
 return 0
 
@@ -749,7 +665,7 @@ fi
 
 echo
 
-configure_slackware $cache/rootfs-$suite-$arch $name
+configure_slackware $cache/rootfs-$SUITE-$arch $name
 if [ $? -ne 0 ]; then
 	echo "failed to configure slackware for a container"
 	exit 1
