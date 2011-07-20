@@ -1,0 +1,276 @@
+#! /bin/sh
+# /etc/rc.d/rc.inet1
+# This script is used to bring up the various network interfaces.
+#
+# @(#)/etc/rc.d/rc.inet1 10.2  Sun Jul 24 12:45:56 PDT 2005  (pjv)
+
+############################
+# READ NETWORK CONFIG FILE #
+############################
+
+# Get the configuration information from /etc/rc.d/rc.inet1.conf:
+. /etc/rc.d/rc.inet1.conf
+
+###########
+# LOGGING #
+###########
+
+# If possible, log events in /var/log/messages:
+if [ -f /var/run/syslogd.pid -a -x /usr/bin/logger ]; then
+  LOGGER=/usr/bin/logger
+else # output to stdout/stderr:
+  LOGGER=/bin/cat
+fi
+
+############################
+# DETERMINE INTERFACE LIST #
+############################
+
+# Compose a list of interfaces from /etc/rc.d/rc.inet1.conf (with a maximum
+# of 6 interfaces, but you can easily enlarge the interface limit
+# - send me a picture of such a box :-).
+# If a value for IFNAME[n] is not set, we assume it is an eth'n' interface.
+# This way, the new script is compatible with older rc.inet1.conf files.
+# The IFNAME array will be used to determine which interfaces to bring up/down.
+MAXNICS=${MAXNICS:-6}
+i=0
+while [ $i -lt $MAXNICS ];
+do
+  IFNAME[$i]=${IFNAME[$i]:=eth${i}}
+  i=$(($i+1))
+done
+if [ "$DEBUG_ETH_UP" = "yes" ]; then
+  echo "/etc/rc.d/rc.inet1:  List of interfaces: '${IFNAME[@]}'" | $LOGGER
+fi
+
+######################
+# LOOPBACK FUNCTIONS #
+######################
+
+# Function to bring up the loopback interface.  If loopback is
+# already up, do nothing.
+lo_up() {
+  if grep lo: /proc/net/dev 1> /dev/null ; then
+    if ! /sbin/ifconfig | grep "^lo" 1> /dev/null ; then
+      echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig lo 127.0.0.1" | $LOGGER
+      /sbin/ifconfig lo 127.0.0.1
+      echo "/etc/rc.d/rc.inet1:  /sbin/route add -net 127.0.0.0 netmask 255.0.0.0 lo" | $LOGGER
+      /sbin/route add -net 127.0.0.0 netmask 255.0.0.0 lo
+    fi
+  fi
+}
+
+# Function to take down the loopback interface:
+lo_down() {
+  if grep lo: /proc/net/dev 1> /dev/null ; then
+    echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig lo down" | $LOGGER
+    /sbin/ifconfig lo down
+  fi
+}
+
+#######################
+# INTERFACE FUNCTIONS #
+#######################
+
+# Function to bring up a network interface.  If the interface is
+# already up or does not yet exist (perhaps because the kernel driver
+# is not loaded yet), do nothing.
+if_up() {
+  # Determine position 'i' of this interface in the IFNAME array:
+  i=0
+  while [ $i -lt $MAXNICS ]; do
+    [ "${IFNAME[$i]}" = "${1}" ] && break
+    i=$(($i+1))
+  done
+  # If the interface isn't in the kernel yet (but there's an alias for it in
+  # modules.conf), then it should be loaded first:
+  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
+    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
+      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
+      /sbin/modprobe ${1}
+    fi
+  fi
+  if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
+    if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
+      ! /sbin/ifconfig ${1} | grep "inet addr" 1> /dev/null ; then # interface not up or not configured
+      if [ ! "${HWADDR[$i]}" = "" ]; then # Set hardware address _before_ the interface goes up:
+        echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig ${1} hw ether ${HWADDR[$i]}" | $LOGGER
+        /sbin/ifconfig ${1} hw ether ${HWADDR[$i]}
+      fi
+      if [ ! "${MTU[$i]}" = "" ]; then # Set MTU to something else than 1500
+        echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig ${1} mtu ${MTU[$i]}" | $LOGGER
+        /sbin/ifconfig ${1} mtu ${MTU[$i]}
+      fi
+      if [ -x /etc/rc.d/rc.wireless ]; then
+        . /etc/rc.d/rc.wireless ${1} start # Initialize any wireless parameters
+      fi
+      if [ "${USE_DHCP[$i]}" = "yes" ]; then # use DHCP to bring interface up
+        [ ${DHCP_HOSTNAME[$i]} ] && DHCP_OPTIONS="-h ${DHCP_HOSTNAME[$i]}"
+        [ "${DHCP_KEEPRESOLV[$i]}" = "yes" ] && DHCP_OPTIONS="$DHCP_OPTIONS -C resolv.conf"
+        [ "${DHCP_KEEPNTP[$i]}" = "yes" ] && DHCP_OPTIONS="$DHCP_OPTIONS -C ntp.conf"
+        [ "${DHCP_KEEPGW[$i]}" = "yes" ] && DHCP_OPTIONS="$DHCP_OPTIONS -G"
+        [ "${DHCP_DEBUG[$i]}" = "yes" ] && DHCP_OPTIONS="$DHCP_OPTIONS -d"
+        [ "${DHCP_NOIPV4LL[$i]}" = "yes" ] && DHCP_OPTIONS="$DHCP_OPTIONS -L"
+        [ ${DHCP_IPADDR[$i]} ] && DHCP_OPTIONS="$DHCP_OPTIONS -r ${DHCP_IPADDR[$i]}"
+        echo "Polling for DHCP server on interface ${1}:"
+        # If you set a timeout, you get one, even if the kernel doesn't think that
+        # your device is connected, in case /sys isn't right (which it usually isn't
+        # except right after the device is loaded, when it usually is):
+        #### (start commented out)
+        # This is deactivated for now since the kernel has been returning incorrect
+        # results concerning whether the interface carrier is detected.
+        #if [ "${DHCP_TIMEOUT[$i]}" = "" ]; then
+        #  ifconfig ${1} up && sleep 1
+        #  CONNSTATUS="$(cat /sys/class/net/${1}/carrier 2> /dev/null)"
+        #  ifconfig ${1} down
+        #  if [ "$CONNSTATUS" = "0" ]; then
+        #    # The kernel has just told us the cable isn't even plugged in, but we will
+        #    # give any DHCP server a short chance to reply anyway:
+        #    echo "No carrier detected on ${1}.  Reducing DHCP timeout to 10 seconds."
+        #    DHCP_TIMEOUT[$i]=10
+        #  fi
+        #fi
+        #### (end commented out)
+        # 10 seconds should be a reasonable default DHCP timeout.  30 was too much.
+        echo "/etc/rc.d/rc.inet1:  /sbin/dhcpcd -t ${DHCP_TIMEOUT[$i]:-10} ${DHCP_OPTIONS} ${1}" | $LOGGER
+        /sbin/dhcpcd -t ${DHCP_TIMEOUT[$i]:-10} ${DHCP_OPTIONS} ${1}
+      else # bring up interface using a static IP address
+        if [ ! "${IPADDR[$i]}" = "" ]; then # skip unconfigured interfaces
+          # Determine broadcast address from the IP address and netmask:
+          BROADCAST[$i]=`/bin/ipmask ${NETMASK[$i]} ${IPADDR[$i]}|cut -f1 -d' '`
+          # Set up the network card:
+          echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig ${1} ${IPADDR[$i]} broadcast ${BROADCAST[$i]} netmask ${NETMASK[$i]}" | $LOGGER
+          /sbin/ifconfig ${1} ${IPADDR[$i]} broadcast ${BROADCAST[$i]} netmask ${NETMASK[$i]}
+        else
+          if [ "$DEBUG_ETH_UP" = "yes" ]; then
+            echo "/etc/rc.d/rc.inet1:  ${1} interface is not configured in /etc/rc.d/rc.inet1.conf" | $LOGGER
+          fi
+        fi
+      fi
+    else
+      if [ "$DEBUG_ETH_UP" = "yes" ]; then
+        echo "/etc/rc.d/rc.inet1:  ${1} is already up, skipping" | $LOGGER
+      fi
+    fi 
+  else
+    if [ "$DEBUG_ETH_UP" = "yes" ]; then
+      echo "/etc/rc.d/rc.inet1:  ${1} interface does not exist (yet)" | $LOGGER
+    fi
+  fi
+}
+
+# Function to take down a network interface:
+if_down() {
+  # Determine position 'i' of this interface in the IFNAME array:
+  i=0
+  while [ $i -lt $MAXNICS ]; do
+    [ "${IFNAME[$i]}" = "${1}" ] && break
+    i=$(($i+1))
+  done
+  if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then
+    if [ "${USE_DHCP[$i]}" = "yes" ]; then
+      echo "/etc/rc.d/rc.inet1:  /sbin/dhcpcd -k -d ${1}" | $LOGGER
+      /sbin/dhcpcd -k -d ${1} 2> /dev/null || /sbin/ifconfig ${1} down
+      sleep 1
+    else
+      echo "/etc/rc.d/rc.inet1:  /sbin/ifconfig ${1} down" | $LOGGER
+      /sbin/ifconfig ${1} down
+    fi
+    if [ -x /etc/rc.d/rc.wireless ]; then
+      . /etc/rc.d/rc.wireless ${1} stop # Kill wireless daemons if any.
+    fi
+  fi
+}
+
+#####################
+# GATEWAY FUNCTIONS #
+#####################
+
+# Function to bring up the gateway if there is not yet a default route:
+gateway_up() {
+  if ! /sbin/route -n | grep "^0.0.0.0" 1> /dev/null ; then
+    if [ ! "$GATEWAY" = "" ]; then
+      echo "/etc/rc.d/rc.inet1:  /sbin/route add default gw ${GATEWAY} metric 1" | $LOGGER
+      /sbin/route add default gw ${GATEWAY} metric 1 2>&1 | $LOGGER
+    fi
+  fi
+}
+
+# Function to take down an existing default gateway:
+gateway_down() {
+  if /sbin/route -n | grep "^0.0.0.0" 1> /dev/null ; then
+    echo "/etc/rc.d/rc.inet1:  /sbin/route del default" | $LOGGER
+    /sbin/route del default
+  fi
+}
+
+# Function to start the network:
+start() {
+  lo_up
+  for i in ${IFNAME[@]} ; do
+    if_up $i
+  done
+  gateway_up
+}
+
+# Function to stop the network:
+stop() {
+  gateway_down
+  for i in ${IFNAME[@]} ; do
+    if_down $i
+  done
+  lo_down
+}
+
+
+############
+### MAIN ###
+############
+
+case "$1" in
+'start') # "start" brings up all configured interfaces:
+  start
+  ;;
+'stop') # "stop" takes down all configured interfaces:
+  stop
+  ;;
+'restart') # "restart" restarts the network:
+  stop
+  start
+  ;;
+*_start) # Example: "eth1_start" will start the specified interface 'eth1'
+  INTERFACE=`echo $1 | /bin/cut -d '_' -f 1`
+  if_up $INTERFACE
+  gateway_up
+  ;;
+*_stop) # Example: "eth0_stop" will stop the specified interface 'eth0'
+  INTERFACE=`echo $1 | /bin/cut -d '_' -f 1`
+  if_down $INTERFACE
+  ;;
+*_restart) # Example: "wlan0_restart" will take 'wlan0' down and up again
+  INTERFACE=`echo $1 | /bin/cut -d '_' -f 1`
+  if_down $INTERFACE
+  sleep 1
+  if_up $INTERFACE
+  gateway_up
+  ;;
+'up') # "up" does the same thing as "start"
+  start
+  ;;
+'down') # "down" does the same thing as "stop"
+  stop
+  ;;
+*_up) # "*_up" does the same thing as "*_start"
+  INTERFACE=`echo $1 | /bin/cut -d '_' -f 1`
+  if_up $INTERFACE
+  gateway_up
+  ;;
+*_down) # "*_down" does the same thing as "*_stop"
+  INTERFACE=`echo $1 | /bin/cut -d '_' -f 1`
+  if_down $INTERFACE
+  ;;
+*) # The default is to bring up all configured interfaces:
+  start
+esac
+
+# End of /etc/rc.d/rc.inet1
