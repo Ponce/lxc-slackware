@@ -123,7 +123,7 @@ chmod -x $rootfs/etc/rc.d/rc.{udev,loop}
 # and some other small fixes for a clean boot
 cat >$rootfs/tmp/rcs.patch <<'EOF'
 --- ./etc/rc.d/rc.S.orig	2011-07-20 10:18:27.956637848 +0200
-+++ ./etc/rc.d/rc.S	2011-07-20 10:44:26.973147462 +0200
++++ ./etc/rc.d/rc.S	2011-07-20 11:14:26.553649659 +0200
 @@ -4,9 +4,18 @@
  #
  # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
@@ -209,7 +209,7 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
  if [ -f /etc/random-seed ]; then
    echo "Using /etc/random-seed to initialize /dev/urandom."
 --- ./etc/rc.d/rc.6.orig	2011-07-20 10:18:24.478681336 +0200
-+++ ./etc/rc.d/rc.6	2011-07-20 10:44:26.973147462 +0200
++++ ./etc/rc.d/rc.6	2011-07-20 11:14:26.553649659 +0200
 @@ -9,6 +9,12 @@
  # Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
  # Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
@@ -329,54 +329,83 @@ cat >$rootfs/tmp/rcs.patch <<'EOF'
 +# confirm successful shutdown
 +echo ; echo "* container stopped. *" ; echo
 +
---- ./etc/rc.d/rc.inet1.orig    2011-07-15 12:32:27.000000000 +0200
-+++ ./etc/rc.d/rc.inet1 2011-07-15 12:03:48.000000000 +0200
-@@ -82,14 +82,14 @@
-     [ "${IFNAME[$i]}" = "${1}" ] && break
-     i=$(($i+1))
-   done
--  # If the interface isn't in the kernel yet (but there's an alias for it in
--  # modules.conf), then it should be loaded first:
--  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
--    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
--      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
--      /sbin/modprobe ${1}
--    fi
--  fi
-+#  # If the interface isn't in the kernel yet (but there's an alias for it in
-+#  # modules.conf), then it should be loaded first:
-+#  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
-+#    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
-+#      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
-+#      /sbin/modprobe ${1}
-+#    fi
-+#  fi
-   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
-     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
-       ! /sbin/ifconfig ${1} | grep "inet addr" 1> /dev/null ; then # interface not up or not configured
---- ./etc/rc.d/rc.M.orig        2011-07-15 12:32:00.000000000 +0200
-+++ ./etc/rc.d/rc.M     2011-07-15 12:19:41.000000000 +0200
-@@ -20,9 +20,9 @@
+--- ./etc/rc.d/rc.M.orig	2011-07-20 11:13:38.332252512 +0200
++++ ./etc/rc.d/rc.M	2011-07-20 11:14:26.553649659 +0200
+@@ -10,6 +10,10 @@
+ # Author:	Fred N. van Kempen, <waltje@uwalt.nl.mugnet.org>
+ #		Heavily modified by Patrick Volkerding <volkerdi@slackware.com>
+ #
++# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
++# a check for a CONTAINER variable is made to jump unneeded sections
++
++CONTAINER=yes
+ 
+ # Tell the viewers what's going to happen.
+ echo "Going multiuser..."
+@@ -20,10 +24,15 @@
    /sbin/ldconfig &
  fi
  
--# Screen blanks after 15 minutes idle time, and powers down in one hour
--# if the kernel supports APM or ACPI power management:
--/bin/setterm -blank 15 -powersave powerdown -powerdown 60
-+## Screen blanks after 15 minutes idle time, and powers down in one hour
-+## if the kernel supports APM or ACPI power management:
-+#/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++# container check
++if [ ! $CONTAINER ]; then
++
+ # Screen blanks after 15 minutes idle time, and powers down in one hour
+ # if the kernel supports APM or ACPI power management:
+ /bin/setterm -blank 15 -powersave powerdown -powerdown 60
  
++fi # end container check
++
  # Set the hostname.
  if [ -r /etc/HOSTNAME ]; then
+   /bin/hostname $(cat /etc/HOSTNAME | cut -f1 -d .)
+--- ./etc/rc.d/rc.inet1.orig	2011-07-20 11:13:56.671023244 +0200
++++ ./etc/rc.d/rc.inet1	2011-07-20 11:14:26.553649659 +0200
+@@ -3,6 +3,11 @@
+ # This script is used to bring up the various network interfaces.
+ #
+ # @(#)/etc/rc.d/rc.inet1 10.2  Sun Jul 24 12:45:56 PDT 2005  (pjv)
++#
++# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
++# a check for a CONTAINER variable is made to jump unneeded sections
++
++CONTAINER=yes
+ 
+ ############################
+ # READ NETWORK CONFIG FILE #
+@@ -82,6 +87,10 @@
+     [ "${IFNAME[$i]}" = "${1}" ] && break
+     i=$(($i+1))
+   done
++
++  # container check
++  if [ ! $CONTAINER ]; then
++
+   # If the interface isn't in the kernel yet (but there's an alias for it in
+   # modules.conf), then it should be loaded first:
+   if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
+@@ -90,6 +99,9 @@
+       /sbin/modprobe ${1}
+     fi
+   fi
++
++  fi # end container check
++
+   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
+     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
+       ! /sbin/ifconfig ${1} | grep "inet addr" 1> /dev/null ; then # interface not up or not configured
 EOF
 ( cd $rootfs ; patch -s -p1 < tmp/rcs.patch ; rm tmp/rcs.patch )
 
+# restart rc.inet1 to have routing for the loop device
+echo "/etc/rc.d/rc.inet1 restart" >> $rootfs/etc/rc.d/rc.local
+
+# reduce the number of local consoles: two should be enough
+sed -i '/^c3\|^c4\|^c5\|^c6/s/^/# /' $rootfs/etc/inittab
+
 # add a message to rc.local that confirms successful container startup
-echo ; echo "echo \"* container $name started. *\"" >> $rootfs/etc/rc.d/rc.local ; echo
+echo "echo ; echo \"* container $name started. *\" ; echo" >> $rootfs/etc/rc.d/rc.local
 
 # set a default combination for the luggage
-echo
 echo "root:root" | chroot $rootfs chpasswd
 echo "Root password is 'root', please change !"
 
@@ -551,10 +580,7 @@ lxc.cgroup.devices.allow = c 5:2 rwm
 # rtc
 lxc.cgroup.devices.allow = c 254:0 rwm
 
-# mounts point
-lxc.mount.entry=proc $rootfs/proc proc nodev,noexec,nosuid 0 0
-lxc.mount.entry=devpts $rootfs/dev/pts devpts defaults 0 0
-lxc.mount.entry=sysfs $rootfs/sys sysfs defaults  0 0
+lxc.mount = $rootfs/etc/fstab
 
 # better safe than sorry: comment out only if brave
 lxc.cap.drop=sys_admin
