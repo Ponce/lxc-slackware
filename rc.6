@@ -9,6 +9,12 @@
 # Author:	Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
 # Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
 #
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# based also on Chris Willing's modifications
+# http://www.vislab.uq.edu.au/howto/lxc/rc.6
+# a check for a container variable is made to jump unneeded sectons
+
+CONTAINER=yes
 
 # Set the path.
 PATH=/sbin:/etc:/bin:/usr/bin
@@ -37,6 +43,9 @@ case "$0" in
 		;;
 esac
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Save the system time to the hardware clock using hwclock --systohc.
 if [ -x /sbin/hwclock ]; then
   # Check for a broken motherboard RTC clock (where ioports for rtc are
@@ -52,6 +61,8 @@ if [ -x /sbin/hwclock ]; then
     /sbin/hwclock  $CLOCK_OPT --localtime --systohc
   fi
 fi
+
+fi # end container check
 
 # Run any local shutdown scripts:
 if [ -x /etc/rc.d/rc.local_shutdown ]; then
@@ -141,6 +152,9 @@ if /bin/ls /etc/dhcpc/*.pid 1> /dev/null 2> /dev/null ; then
   sleep 2
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Shut down PCMCIA devices:
 if [ -x /etc/rc.d/rc.pcmcia ]; then
   . /etc/rc.d/rc.pcmcia stop
@@ -148,15 +162,22 @@ if [ -x /etc/rc.d/rc.pcmcia ]; then
   /bin/sleep 5
 fi
 
+fi # end container check
+
 # Turn off process accounting:
 if [ -x /sbin/accton -a -r /var/log/pacct ]; then
   /sbin/accton off
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Terminate acpid before syslog:
 if [ -x /etc/rc.d/rc.acpid -a -r /var/run/acpid.pid ]; then # quit
   . /etc/rc.d/rc.acpid stop
 fi
+
+fi # end container check
 
 # Kill all processes.
 # INIT is supposed to handle this entirely now, but this didn't always
@@ -169,6 +190,9 @@ if [ ! "$1" = "fast" ]; then # shutdown did not already kill all processes
   /sbin/killall5 -9
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Try to turn off quota.
 if /bin/grep -q quota /etc/fstab ; then
   if [ -x /sbin/quotaoff ]; then
@@ -176,6 +200,8 @@ if /bin/grep -q quota /etc/fstab ; then
     /sbin/quotaoff -a
   fi
 fi
+
+fi # end container check
 
 # Carry a random seed between reboots.
 echo "Saving random seed from /dev/urandom in /etc/random-seed."
@@ -195,13 +221,21 @@ if [ -d /var/lock/subsys ]; then
   rm -f /var/lock/subsys/*
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Turn off swap:
 echo "Turning off swap."
 /sbin/swapoff -a
 /bin/sync
 
+fi # end container check
+
 echo "Unmounting local file systems."
 /bin/umount -v -a -t no,proc,sysfs
+
+# container check
+if [ ! $CONTAINER ]; then
 
 echo "Remounting root filesystem read-only."
 /bin/mount -v -n -o remount,ro /
@@ -271,4 +305,9 @@ if [ "$command" = "reboot" ]; then
 else
   /sbin/poweroff
 fi
+
+fi # end container check
+
+# confirm successful shutdown
+echo ; echo "* container stopped. *"
 

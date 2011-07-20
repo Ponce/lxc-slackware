@@ -4,6 +4,12 @@
 #
 # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
 #
+# tweaks for an lxc container by ponce <matteo.bernardini@gmail.com>,
+# based also on Chris Willing's modifications
+# http://www.vislab.uq.edu.au/howto/lxc/rc.S
+# a check for a container variable is made to jump unneeded sectons
+
+CONTAINER=yes
 
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 
@@ -18,6 +24,9 @@ if [ -d /sys ]; then
     fi
   fi
 fi
+
+# container check
+if [ ! $CONTAINER ]; then
 
 # Load the loop device kernel module:
 if [ -x /etc/rc.d/rc.loop ]; then
@@ -250,6 +259,8 @@ else
   read junk;
 fi # Done checking root filesystem
 
+fi # end container check
+
 # Any /etc/mtab that exists here is old, so we delete it to start over:
 /bin/rm -f /etc/mtab*
 # Remounting the / partition will initialize the new /etc/mtab:
@@ -259,6 +270,9 @@ fi # Done checking root filesystem
 # show them correctly. This does not stop those arguments from functioning
 # but does prevent a small bug with /etc/mtab.
 /bin/grep ' / ' /proc/mounts | grep -v "^rootfs" > /etc/mtab
+
+# container check
+if [ ! $CONTAINER ]; then
 
 # Fix /etc/mtab to list sys and proc if they were not yet entered in
 # /etc/mtab because / was still mounted read-only:
@@ -317,6 +331,8 @@ if grep -wq usbfs /proc/filesystems; then
   fi
 fi
 
+fi # end container check
+
 # Mount non-root file systems in fstab, but not NFS or SMB 
 # because TCP/IP is not yet configured, and not proc or sysfs
 # because those have already been mounted.  Also check that
@@ -332,10 +348,15 @@ else
   /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
 fi
 
+# container check
+if [ ! $CONTAINER ]; then
+
 # Enable swapping again.  This is needed in case a swapfile is used,
 # as it can't be enabled until the filesystem it resides on has been
 # mounted read-write.
 /sbin/swapon -a 2> /dev/null
+
+fi # end container check
 
 # Clean up some temporary files:
 rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
@@ -364,13 +385,16 @@ chmod 664 /var/run/utmp
 # if the first line of that file begins with the word 'Linux'.
 # You are free to modify the rest of the file as you see fit.
 if [ -x /bin/sed ]; then
-  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
+  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
 fi
 
 # If there are SystemV init scripts for this runlevel, run them.
 if [ -x /etc/rc.d/rc.sysvinit ]; then
   . /etc/rc.d/rc.sysvinit
 fi
+
+# container check
+if [ ! $CONTAINER ]; then
 
 # Run serial port setup script:
 # CAREFUL!  This can make some systems hang if the rc.serial script isn't
@@ -379,6 +403,8 @@ fi
 if [ -x /etc/rc.d/rc.serial ]; then
   sh /etc/rc.d/rc.serial start
 fi
+
+fi # end container check
 
 # Carry an entropy pool between reboots to improve randomness.
 if [ -f /etc/random-seed ]; then
