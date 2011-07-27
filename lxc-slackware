@@ -27,11 +27,13 @@ SUITE=${SUITE:-13.37}
 cache="/var/cache/lxc/slackware"
 MIRROR=${MIRROR:-http://slackware.osuosl.org}
 
+if [ -z "$arch" ]; then
 case "$( uname -m )" in
     i?86) arch=i486 ;;
-#    arm*) arch=arm ;;
+    arm*) arch=arm ;;
        *) arch=$( uname -m ) ;;
 esac
+fi
 
 configure_slackware()
 {
