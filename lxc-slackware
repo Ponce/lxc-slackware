@@ -6,6 +6,9 @@
 # Authors:
 # Daniel Lezcano <daniel.lezcano@free.fr>
 
+# template for slackware by ponce <matteo.bernardini@gmail.com>
+# some parts are taken from the debian one (used as model)
+
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
 # License as published by the Free Software Foundation; either
@@ -20,12 +23,10 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
-# template for slackware 13.37 by ponce <matteo.bernardini@gmail.com>
-# based on the debian one
-
 SUITE=${SUITE:-13.37}
-cache="/var/cache/lxc/slackware"
-MIRROR=${MIRROR:-http://slackware.osuosl.org}
+cache=${cache:-/var/cache/lxc/slackware}
+# let's use a secondary mirror to avoid loading the primary
+MIRROR=${MIRROR:-http://www.slackware.at/data}
 
 if [ -z "$arch" ]; then
 case "$( uname -m )" in
@@ -40,12 +41,11 @@ configure_slackware()
 rootfs=$1
 hostname=$2
 
-echo "Configuring..."
-echo
+echo "Configuring..." ; echo
 
 # the next part contains excerpts taken from SeTconfig (written by
 # Patrick Volkerding) from the slackware setup disk.
-# but before pasting just set a variable to use them as they are 
+# but before pasting them just set a variable to use them as they are 
 T_PX=$rootfs
 
 ( cd $T_PX ; chmod 755 ./ )
@@ -77,11 +77,9 @@ echo " /usr/bin/loadkeys us" >> $T_PX/etc/rc.d/rc.keymap
 echo "fi" >> $T_PX/etc/rc.d/rc.keymap
 chmod 755 $T_PX/etc/rc.d/rc.keymap
 
-# try to configure the primary container interface using dhcp
-sed -i -e 's|USE_DHCP\[0\]=""|USE_DHCP\[0\]="yes"|' \
-  $rootfs/etc/rc.d/rc.inet1.conf
-
-# set the hostname
+# network configuration is left to the user
+# editing /etc/rc.d/rc.inet1.conf and /etc/resolv.conf of the container
+# just set the hostname
 cat <<EOF > $rootfs/etc/HOSTNAME
 $hostname.example.net
 EOF
@@ -107,12 +105,14 @@ mknod -m 666 ${DEV}/tty4 c 4 4
 mknod -m 666 ${DEV}/tty5 c 4 5
 mknod -m 666 ${DEV}/full c 1 7
 mknod -m 600 ${DEV}/initctl p
-mknod -m 666 ${DEV}/ptmx c 5 2
+mknod -m 660 ${DEV}/loop0 b 7 0
+mknod -m 660 ${DEV}/loop1 b 7 1
+ln -s pts/ptmx ${DEV}/ptmx
 
 echo "Adding an etc/fstab that must be edited later"
 echo "with the full path of the container if you move it."
 cat >$rootfs/etc/fstab <<EOF
-none $rootfs/dev/pts devpts defaults 0 0
+lxcpts $rootfs/dev/pts devpts defaults,newinstance 0 0
 none $rootfs/proc    proc   defaults 0 0
 none $rootfs/sys     sysfs  defaults 0 0
 none /dev/shm tmpfs  defaults 0 0
@@ -412,7 +412,7 @@ echo "echo ; echo \"* container $name started. *\" ; echo" >> $rootfs/etc/rc.d/r
 
 # set a default combination for the luggage
 echo "root:root" | chroot $rootfs chpasswd
-echo "Root password is 'root', please change !"
+echo "Root password is 'root', please change it!"
 
 return 0
 }
@@ -470,7 +470,7 @@ n/wget-1.12-$arch-1.txz \
 a/which-2.20-$arch-1.txz \
 a/xz-5.0.2-$arch-1.tgz"}
 
-# check the slackware packages aren't already downloaded
+# check if the slackware packages are already downloaded
 mkdir -p "$cache/partial-$SUITE-$arch"
 if [ $? -ne 0 ]; then
 	echo "Failed to create '$cache/partial-$SUITE-$arch' directory"
@@ -498,21 +498,11 @@ echo
 return 0
 }
 
-install_packages()
-{
-rootfs=$1
-for package in $cache/cache-$SUITE-$arch/*.t?z ; do
-	installpkg -root $rootfs -terse -priority ADD $package
-done
-
-return 0
-}
-
 copy_slackware()
 {
 rootfs=$1
 
-# make a local copy of the minislackware
+# make a local copy of the installed filesystem
 echo -n "Copying rootfs to $rootfs..."
 cp -a "$cache/rootfs-$SUITE-$arch" $rootfs || return 1
 
@@ -537,7 +527,7 @@ echo "Checking cache download in $cache/cache-$SUITE-$arch ... "
 if [ ! -e "$cache/cache-$SUITE-$arch" ]; then
 	download_slackware
 	if [ $? -ne 0 ]; then
-		echo "Failed to download slackware base packages"
+		echo "Failed to download slackware base packages."
 		return 1
 	fi
 fi
@@ -548,7 +538,9 @@ if [ -e "$cache/rootfs-$SUITE-$arch" ]; then
 	rm -fR "$cache/rootfs-$SUITE-$arch"
 fi
 mkdir -p "$cache/rootfs-$SUITE-$arch"
-install_packages $cache/rootfs-$SUITE-$arch
+for package in $cache/cache-$SUITE-$arch/*.t?z ; do
+	installpkg -root $cache/rootfs-$SUITE-$arch -terse -priority ADD $package
+done
 
 return 0
 
@@ -564,10 +556,15 @@ rootfs=$2
 name=$3
 
 cat <<EOF >> $path/config
+
 lxc.utsname = $name
-lxc.tty = 6
+
+lxc.mount = $rootfs/etc/fstab
+
+lxc.tty = 4
 lxc.pts = 1024
 lxc.rootfs = $rootfs
+
 lxc.cgroup.devices.deny = a
 # /dev/null and zero
 lxc.cgroup.devices.allow = c 1:3 rwm
@@ -585,14 +582,19 @@ lxc.cgroup.devices.allow = c 5:2 rwm
 # rtc
 lxc.cgroup.devices.allow = c 254:0 rwm
 
-lxc.mount = $rootfs/etc/fstab
+# we don't trust root user in the container, better safe than sorry.
+# comment out only if you know what you're doing.
+lxc.cap.drop = sys_module mknod
+lxc.cap.drop = mac_override  kill sys_time
+lxc.cap.drop = setfcap setpcap sys_boot
 
-# better safe than sorry: comment out only if brave
-lxc.cap.drop=sys_admin
+# if you want to be even more restrictive with your container's root
+# user comment the three lines above and uncomment the following one
+# lxc.cap.drop=sys_admin
 EOF
 
 if [ $? -ne 0 ]; then
-	echo "Failed to add configuration"
+	echo "Failed to add configuration."
 	return 1
 fi
 
@@ -656,23 +658,23 @@ fi
 
 type installpkg
 if [ $? -ne 0 ]; then
-	echo "'installpkg' command is missing"
+	echo "'installpkg' command is missing."
 	exit 1
 fi
 
 if [ -z "$path" ]; then
-	echo "'path' parameter is required"
+	echo "'path' parameter is required."
 	exit 1
 fi
 
 if [ "$(id -u)" != "0" ]; then
-	echo "This script should be run as 'root'"
+	echo "This script should be run as 'root'."
 	exit 1
 fi
 
 if [ -z "$name" ]; then
 	# no name given? set a default one
-	name=minislack
+	name=slackwarecontainer
 fi
 
 echo
@@ -680,7 +682,7 @@ echo
 rootfs=$path/rootfs
 install_slackware $rootfs
 if [ $? -ne 0 ]; then
-	echo "failed to install slackware"
+	echo "Failed to install slackware."
 	exit 1
 fi
 
@@ -688,7 +690,7 @@ echo
 
 configure_slackware $cache/rootfs-$SUITE-$arch $name
 if [ $? -ne 0 ]; then
-	echo "failed to configure slackware for a container"
+	echo "Failed to configure slackware for a container."
 	exit 1
 fi
 
@@ -697,7 +699,7 @@ echo
 rootfs=$path/rootfs
 copy_slackware $rootfs
 if [ $? -ne 0 ]; then
-	echo "Failed to copy rootfs"
+	echo "Failed to copy rootfs."
 	return 1
 fi
 
@@ -705,15 +707,11 @@ echo
 
 copy_configuration $path $rootfs $name
 if [ $? -ne 0 ]; then
-	echo "failed to write configuration file"
+	echo "Failed to write configuration file."
 	exit 1
 fi
-
-echo
-echo "Slackware mini container $name creation completed."
 
 if [ ! -z $clean ]; then
 	clean || exit 1
 	exit 0
 fi
-
