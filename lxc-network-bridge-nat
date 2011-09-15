@@ -14,8 +14,6 @@
 /sbin/brctl addbr br0
 /sbin/brctl setfd br0 0
 /sbin/ifconfig br0 192.168.11.1 netmask 255.255.255.0 promisc up
-/sbin/brctl addif br0 dummy0
-ifconfig dummy0 0.0.0.0 up
 echo 1 > /proc/sys/net/ipv4/ip_forward
 echo 1 > /proc/sys/net/ipv4/conf/br0/proxy_arp
 /usr/sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
